@@ -18,7 +18,7 @@ http://www.adfg.alaska.gov/FedAidPDFs/ROP.SF.3F.2018.10.pdf
 
 * `tyb_analysis` 
   * Reads & processes data
-  * analysis
+  * Runs analyses
+    * Length composition
 
-### `Tanana_burbot_telemetry.Rproj` allows opening as an Rstudio project
 
