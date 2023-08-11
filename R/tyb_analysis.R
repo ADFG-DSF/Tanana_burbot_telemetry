@@ -1,5 +1,9 @@
-## Analysis script for Tanana Burbot Telemetry
-## Matt Tyers, fall 2023
+#### Analysis script for Tanana Burbot Telemetry
+#### Matt Tyers, fall 2023
+
+
+#### Data & setup
+
 
 # load packages
 library(riverdist)   # for spatial river network analysis (note: used v0.16.0)
@@ -16,10 +20,11 @@ akalbers <- "+proj=aea +lat_1=55 +lat_2=65
     +lat_0=50 +lon_0=-154 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs 
     +ellps=GRS80"
 
-# conversion
+# coordinate conversion
 telem_albers <- telemdata %>% 
   select(c("longitude", "latitude")) %>%    # extracting coord matrix
-  sf::sf_project(pts=., to=akalbers)        # re-projecting to Alaska Albers
+  sf::sf_project(pts=., to=akalbers)  %>%   # re-projecting to Alaska Albers
+  as.data.frame                             # make it a data.frame
 colnames(telem_albers) <- c("AlbersX","AlbersY")
 # head(telem_albers)
 
@@ -49,9 +54,44 @@ tyb_trim$mouth$mouth.seg <- 80
 tyb_trim$mouth$mouth.vert <- 1316
 
 
+
+
 ## finishing the data stuff ASSUMING WE USE tyb_trim
 # converting to river coordinates
 telem_segvert <- xy2segvert(x=telem_albers[,1], y=telem_albers[,2], rivers=tyb_trim)
 
 # bundling albers & segvert with original data.frame
-telemdata <- cbind(telemdata, as.data.frame(telem_albers), telem_segvert)
+telemdata <- cbind(telemdata, telem_albers, telem_segvert) %>%
+  filter(use=="Y")
+head(telemdata)
+
+
+
+
+#### Analysis!
+
+## length composition
+
+# generate a table of unique individuals:
+# - length
+# - tagging location
+# - tagging habitat
+# should i be working with the .xlsx version instead?
+
+
+
+## run timing??
+
+
+
+## estimate proportions within each river section, per survey
+
+
+
+## identify probable spawning areas in the mainstem Tanana River during late January
+
+
+
+## describe seasonal distributions and migrations (this will be the big one)
+
+# maybe generate list by survey date? or wide format
