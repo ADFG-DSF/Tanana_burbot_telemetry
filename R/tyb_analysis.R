@@ -62,8 +62,10 @@ telem_segvert <- xy2segvert(x=telem_albers[,1], y=telem_albers[,2], rivers=tyb_t
 
 # bundling albers & segvert with original data.frame
 telemdata <- cbind(telemdata, telem_albers, telem_segvert) %>%
-  filter(use=="Y" & total_length!="TEST TAG")   #### important!!!
+  filter(use=="Y" & total_length!="TEST TAG" & !(flight_num %in% c(2.5, 3.5)))   #### important!!!
+# misc data reformatting
 telemdata$total_length <- as.numeric(telemdata$total_length)
+telemdata$date <- as.Date(telemdata$date, format="%m/%d/%Y")
 head(telemdata)
 
 # grabbing the distance from lowest point on the river, as a single metric of
@@ -72,7 +74,15 @@ telemdata$mouthdist <- with(telemdata, mouthdist(seg=seg, vert=vert, rivers=tyb_
 telemdata$mouthdist <- telemdata$mouthdist/1000  # re-expressing in km
 ### idea: what if instead of measuring from an arbitrary junction, we measure
 ### from the Tanana-Yukon confluence, with negative numbers meaning below this?
-
+# telemdata$upriver <- NA
+# for(i in 1:nrow(telemdata)) {
+#   telemdata$upriver[i] <- upstream(startseg=52, startvert=1119,
+#                                    endseg=telemdata$seg[i],
+#                                    endvert=telemdata$vert[i],
+#                                    rivers=tyb_trim)/1000 # re-expressing in km
+# } # actually this is a slow way of doing it.
+telemdata$upriver <- telemdata$mouthdist - tyb_trim$lengths[80]/1000
+# all.equal(telemdata$upriver, telemdata$upriver2)
 
 
 # data: looking for cases in which multiple records exist for unique combinations
@@ -155,8 +165,17 @@ df23d <- function(df, x1, x2, stopifmultiple=T, tiebreaker=NULL, tiemax=T) {  # 
   names(outlist) <- colnames(df)
   return(outlist) 
 }
+
+## make a vector of mean flight dates associated with each number
+## (easier for interpretation)
+mnDates <- as.Date(round(tapply(telemdata$date, telemdata$flight_num, mean)), origin="1970-01-01")
+mnDates_df <- data.frame(flight_num=as.numeric(names(mnDates)), mnDate=mnDates)
+telemdata <- left_join(telemdata, mnDates_df)  # join these to original data
+
+## make 3d list!!
 telem3d <- df23d(df=telemdata, x1="unique_id_num", x2="flight_num", 
                  stopifmultiple = F, tiebreaker="power")  # wow this is slow
+
 
 
 
@@ -177,11 +196,13 @@ tagging_locations <- telem3d$tagging_location[,1]
 # histogram form
 hist(lengths, xlab="Total Length (mm)", main="")   # insert title in main=
 
-# any difference by tagging location?
+# one-way ANOVA: any difference by tagging location?
 boxplot(lengths~tagging_locations, ylab="Total Length (mm)", xlab="Tagging Location")
 lm(lengths~tagging_locations) %>% anova
-# yes!! fish tagged lower down were bigger
+## yes!! evidence of difference in mean lengths by tagging area
+## fish tagged lower down were bigger
 
+# Multiple comparison (Tukey's HSD)
 aov(lengths~tagging_locations) %>% TukeyHSD
 # family-wise significant differences between: 
 # - Middle & Lower
@@ -254,19 +275,19 @@ knitr::kable(length_tbl_props_alt)  # print to Markdown
 # looking at relationship between length and river location, by survey.
 # generally fish lower down are bigger, but the smallest fish are somewhere upper middle?
 par(mfrow=c(4,4))
-for(i in 1:ncol(telem3d$mouthdist)) {
-  plot(lengths ~ telem3d$mouthdist[,i], main=colnames(telem3d$mouthdist)[i],
-       xlim=range(telem3d$mouthdist, na.rm=T), 
+for(i in 2:ncol(telem3d$upriver)) {  # starting at 2 to not include tagging date
+  plot(lengths[telem3d$current_state[,i]!="dead"] ~ telem3d$upriver[,i][telem3d$current_state[,i]!="dead"], main=mnDates[i],
+       xlim=range(telem3d$upriver, na.rm=T), 
        xlab="River Position (km)", ylab="Total Length (mm)")
 }
 # did they disperse?
 par(mfrow=c(4,4))
-for(i in 1:ncol(telem3d$mouthdist)) {
-  plot(lengths ~ telem3d$mouthdist[,i], main=colnames(telem3d$mouthdist)[i],
-       xlim=range(telem3d$mouthdist, na.rm=T), 
+for(i in 2:ncol(telem3d$upriver)) {  # starting at 2 to not include tagging date
+  plot(lengths[telem3d$current_state[,i]!="dead"] ~ telem3d$upriver[,i][telem3d$current_state[,i]!="dead"], main=mnDates[i],
+       xlim=range(telem3d$upriver, na.rm=T), 
        xlab="River Position (km)", ylab="Total Length (mm)", 
-       col=as.numeric(as.factor(telem3d$tagging_location[,1]))+1, pch=16)
-} # not as much as I expected
+       col=as.numeric(as.factor(telem3d$tagging_location[,1]))[telem3d$current_state[,i]!="dead"]+1, pch=16)
+} 
 ### THINK ABOUT HOW TO VISUALIZE THIS BETTER, PERHAPS SPATIALLY
 
 
@@ -284,8 +305,203 @@ for(i in 1:ncol(telem3d$mouthdist)) {
 
 ## identify probable spawning areas in the mainstem Tanana River during late January
 
+# empirical k-functions 
+# review this methodology!  it is very slow and doesn't seem to gain anything
+telemdata1 <- telemdata %>% filter(flight_num>=1 & current_state!="dead")
+par(mfrow=c(4,4))
+with(telemdata1, kfunc(seg=seg, vert=vert, survey=mnDate,
+      rivers=tyb_trim, envreps=100, maxdist=200000))
+
+# kernel density (network)
+# darn, this doesn't seem to gain anything either
+network_dens <- with(telemdata1, makeriverdensity(seg=seg, vert=vert, survey=mnDate,
+                                       rivers=tyb_trim, bw=20*1000))
+# plotriverdensitypoints(network_dens)  # maybe more points than needed
+par(mfrow=c(4,4))
+plot(network_dens, scalebyN=F)
+par(mfrow=c(1,1))
+plot(network_dens, points=F, scalebyN = F)  # maybe I should try animating this
+
+# kernel density (linear)
+bandwidth <- 50  # kernel bandwidth, in km (trial and error)
+lin_denses <- with(telemdata1, tapply(upriver, flight_num, density, bw=bandwidth))
+maxy <- max(sapply(lin_denses, function(x) max(x$y)))
+par(mfrow=c(4,4))
+for(i in 1:length(lin_denses)) {
+  plot(lin_denses[[i]], xlim=range(telemdata1$upriver), ylim=c(0, maxy), main=mnDates[i])
+  xx <- with(telemdata1, upriver[flight_num==names(lin_denses)[i]])
+  points(x=xx, y=abs(jitter(rep(0, length(xx)), 0.005)), col=adjustcolor(1, alpha.f=.3))
+}
+par(mfrow=c(1,1))
+for(i in 1:length(lin_denses)) {
+  plot(lin_denses[[i]], xlim=range(telemdata1$upriver), ylim=c(0, maxy), main=mnDates[i])
+  xx <- with(telemdata1, upriver[flight_num==names(lin_denses)[i]])
+  points(x=xx, y=abs(jitter(rep(0, length(xx)), 0.005)), col=adjustcolor(1, alpha.f=.3))
+} # try animating this one too
+
+
+# all in one plot 
+# upm <- telem3d$upriver[,-1]  # extracting just the matrix of upriver positions minus tagging
+# plotx <- 1:ncol(upm)  # survey numbers
+# plotx <- mnDates[-1]  # actual dates instead
+
+# # v1: X is date, Y is position
+# plot(NA, xlim=range(plotx), ylim=range(upm, na.rm=T),
+#      ylab="Upriver position (km)", xlab="Survey Date")
+# for(i in 1:nrow(upm)) {
+#   points(plotx, upm[i,])
+#   lines(plotx, upm[i,])
+#   lines(plotx[!is.na(upm[i,])], upm[i,!is.na(upm[i,])], lty=3, col=adjustcolor(1,alpha.f=.3))
+# }
+# 
+# # v2: X is position, Y is date
+# plot(NA, ylim=c(max(plotx), min(plotx)), xlim=range(upm, na.rm=T),
+#      xlab="Upriver position (km)", ylab="Survey Date")
+# for(i in 1:nrow(upm)) {
+#   points(upm[i,], plotx)
+#   lines(upm[i,], plotx)
+#   lines(upm[i,!is.na(upm[i,])], plotx[!is.na(upm[i,])], lty=3, col=adjustcolor(1,alpha.f=.3))
+# }
+
+# I wonder if it's more fair to give actual dates (including/highlighting additional fish tagged)
+upm1 <- telem3d$upriver
+upm1[telem3d$current_state=="dead"] <- NA   ### TAKING OUT MORTALITY
+daym <- telem3d$date
+plot(NA, xlim=range(daym, na.rm=T), ylim=range(upm1, na.rm=T),
+     ylab="Upriver position (km)", xaxt='n', xlab="")
+for(i in 1:nrow(upm1)) {
+  points(daym[i,], upm1[i,])
+  lines(daym[i,], upm1[i,])
+  lines(daym[i,][!is.na(upm1[i,])], upm1[i,!is.na(upm1[i,])], lty=3, col=adjustcolor(1,alpha.f=.3))
+}
+axis(side=1, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
+
+plot(NA, ylim=c(max(daym, na.rm=T), min(daym, na.rm=T)), xlim=range(upm, na.rm=T),
+     xlab="Upriver position (km)", yaxt='n', ylab="")
+for(i in 1:nrow(upm1)) {
+  points(upm1[i,], daym[i,])
+  lines(upm1[i,], daym[i,])
+  lines(upm1[i,!is.na(upm1[i,])], daym[i,][!is.na(upm1[i,])], lty=3, col=adjustcolor(1,alpha.f=.3))
+}
+axis(side=2, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
+## I SHOULD BE CONSIDERING MORTALITY IN THIS
+with(telemdata, table(current_state, flight_num))
+
 
 
 ## describe seasonal distributions and migrations (this will be the big one)
 
-# maybe generate list by survey date? or wide format
+
+
+## survival analysis thing? might be cool
+
+# define survival table
+# - each row is an individual
+# - each column is a flight event (not counting tagging)
+# - 0=alive, 1=dead, NA=not found
+survtable <- telem3d$current_state_num[,-1]            # take out tagging event
+survtable <- survtable[rowMeans(is.na(survtable))<1,]  # take out indivs that were never found
+
+# define a vector as the first event each individual was encountered dead
+# once an individual is dead, it stays dead: does not contribute anything to prob model
+# also, back-filling "alive" when an individual is found in later survey
+firstdead <- firstalive <- rep(NA, nrow(survtable))
+for(i in 1:nrow(survtable)) {
+  founddead <- F
+  j <- 1
+  while(!founddead) {
+    if(!is.na(survtable[i,j])) {
+      if(survtable[i,j]==1) {
+        founddead<-T
+        firstdead[i] <- j
+      }
+      if(survtable[i,j]==0) {
+        if(is.na(firstalive[i])) firstalive[i] <- j
+        survtable[i, firstalive[i]:j] <- 0 
+      }
+    }
+    j <- j+1
+    if(j>ncol(survtable)) founddead <- T
+  }
+}
+firstdead[is.na(firstdead)] <- ncol(survtable)  # necessary for Bayesian model to function
+
+
+# Bayesian model
+# - Of interest is parameter vector p[], which represents the probability of
+#   mortality for each sequential pair of surveys.
+# - If an individual is not observed (has value NA) in a given survey, the unobserved
+#   state will be treated as an unknown parameter
+
+library(jagsUI)
+library(jagshelper)
+# skeleton("surv")
+# specify model
+surv_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {                       # for each individual
+    for(j in 1:firstdead[i]) {          # for each survey
+      survtable[i,j] ~ dbern(p[j])
+    }
+  }
+  for(j in 1:np) {
+    p[j] ~ dbeta(1,1)
+  }
+}', file=surv_jags)
+
+# bundle data to pass into JAGS
+surv_data <- list(survtable=survtable,
+                  firstdead=firstdead,
+                  n=nrow(survtable),
+                  np=ncol(survtable))
+
+# JAGS controls
+niter <- 10000
+ncores <- parallel::detectCores()-1
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_jags_out <- jagsUI::jags(model.file=surv_jags, data=surv_data,
+                                parameters.to.save=c("p","survtable"),
+                                n.chains=ncores, parallel=T, n.iter=niter,
+                                n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+
+# checking output & assessing convergence (all looks good)
+# nbyname(surv_jags_out)
+# par(mfrow=c(3,2))
+# plotRhats(surv_jags_out)
+# traceworstRhat(surv_jags_out)
+
+
+# plot 50 & 95% credible intervals for each p!
+par(mfrow=c(1,1))
+caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np))  # 50 & 95% credible intervals for each p!
+axis(side=1, at=1:surv_data$np, mnDates[-1], las=2)
+
+# ppost <- jags_df(surv_jags_out, p="p")
+pmed <- surv_jags_out$q50$p
+pse <- surv_jags_out$sd$p
+plo <- surv_jags_out$q2.5$p
+phi <- surv_jags_out$q97.5$p
+ndigits <- 3
+ci95 <- paste0("(",round(plo, ndigits)," - ", round(phi, ndigits),")")
+ptable <- data.frame(p_est=round(pmed, ndigits),
+                     SE=round(pse, ndigits),
+                     CI95=ci95)
+rownames(ptable) <- mnDates[-1]
+ptable   # print to console
+knitr::kable(ptable)  # print to markdown
+
+
+# I'm so curious how this compares to raw estimate (without modeling unknown states)
+raw_n <- sum(!is.na(survtable[,1]))
+raw_p <- mean(survtable[,1], na.rm=T)
+for(j in 2:ncol(survtable)) {
+  raw_n[j] <- sum(survtable[,j-1]==0 & !is.na(survtable[,j]), na.rm=T)
+  raw_p[j] <- sum(survtable[,j-1]==0 & survtable[,j]==1, na.rm=T)/raw_n[j]
+}
+points(raw_p)  # always lower... did i do it right??
+table(survtable[,12], survtable[,13], useNA="always")   ### starting to check....
