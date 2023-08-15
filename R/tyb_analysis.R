@@ -8,6 +8,11 @@
 # load packages
 library(riverdist)   # for spatial river network analysis (note: used v0.16.0)
 library(tidyverse)   # for streamlined data manipulation
+library(knitr)       # for table output to Markdown
+library(jagsUI)      # for running Bayesian survival analysis 
+library(jagshelper)  # for plotting & model diagnostics
+# Note: JAGS can be downloaded here: https://sourceforge.net/projects/mcmc-jags/
+
 
 # load data
 load(file="data/tyb.Rdata")  # rivernetwork created from shapefile
@@ -186,7 +191,7 @@ telem3d <- df23d(df=telemdata, x1="unique_id_num", x2="flight_num",
 ### length composition
 
 # now we have a way of getting records for each individual fish
-# check if we can just grab the first flight number
+# check if we can just grab the first flight number (marking event)
 colMeans(!is.na(telem3d$total_length))  # all good: all rows are not NA
 
 # grab unique lengths
@@ -367,23 +372,28 @@ for(i in 1:length(lin_denses)) {
 upm1 <- telem3d$upriver
 upm1[telem3d$current_state=="dead"] <- NA   ### TAKING OUT MORTALITY
 daym <- telem3d$date
+parmar <- par("mar")  # storing original margin settings
+par(mar=c(6.1, 4.1, 4.1, 2.1))  # tweaking margin for this plot
 plot(NA, xlim=range(daym, na.rm=T), ylim=range(upm1, na.rm=T),
      ylab="Upriver position (km)", xaxt='n', xlab="")
 for(i in 1:nrow(upm1)) {
-  points(daym[i,], upm1[i,])
-  lines(daym[i,], upm1[i,])
+  points(daym[i,], upm1[i,], col=adjustcolor(1, alpha.f=.5))
+  lines(daym[i,], upm1[i,], col=adjustcolor(1, alpha.f=.5))
   lines(daym[i,][!is.na(upm1[i,])], upm1[i,!is.na(upm1[i,])], lty=3, col=adjustcolor(1,alpha.f=.3))
 }
 axis(side=1, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
 
-plot(NA, ylim=c(max(daym, na.rm=T), min(daym, na.rm=T)), xlim=range(upm, na.rm=T),
+par(mar=c(5.1, 6.1, 4.1, 2.1))  # tweaking margin for this plot
+plot(NA, ylim=c(max(daym, na.rm=T), min(daym, na.rm=T)), xlim=range(upm1, na.rm=T),
      xlab="Upriver position (km)", yaxt='n', ylab="")
 for(i in 1:nrow(upm1)) {
-  points(upm1[i,], daym[i,])
-  lines(upm1[i,], daym[i,])
+  points(upm1[i,], daym[i,], col=adjustcolor(1, alpha.f=.5))
+  lines(upm1[i,], daym[i,], col=adjustcolor(1, alpha.f=.5))
   lines(upm1[i,!is.na(upm1[i,])], daym[i,][!is.na(upm1[i,])], lty=3, col=adjustcolor(1,alpha.f=.3))
 }
 axis(side=2, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
+par(mar=parmar)  # resetting margins to default state
+
 ## I SHOULD BE CONSIDERING MORTALITY IN THIS
 with(telemdata, table(current_state, flight_num))
 
@@ -438,26 +448,44 @@ library(jagshelper)
 # skeleton("surv")
 # specify model
 surv_jags <- tempfile()
+# cat('model {
+#   for(i in 1:n) {                       # for each individual
+#     for(j in 1:firstdead[i]) {          # for each survey
+#       survtable[i,j] ~ dbern(p[j])   ### this does not account for prev time step!!
+#     }
+#   }
+#   for(j in 1:np) {
+#     p[j] ~ dbeta(.1,.1)
+#   }
+# }', file=surv_jags)
 cat('model {
   for(i in 1:n) {                       # for each individual
-    for(j in 1:firstdead[i]) {          # for each survey
-      survtable[i,j] ~ dbern(p[j])
+    survtable[i,1] ~ dbern(p[1])  # first observation
+  }
+  for(i in firstmult:n) {  
+    for(j in 2:firstdead[i]) {          # for each survey
+      survtable[i,j] ~ dbin(p[j], survtable[i,j-1])  ## what if i make 0=dead, 1=alive?   
     }
   }
   for(j in 1:np) {
-    p[j] ~ dbeta(1,1)
+    p[j] ~ dbeta(5,5)
   }
 }', file=surv_jags)
 
 # bundle data to pass into JAGS
-surv_data <- list(survtable=survtable,
-                  firstdead=firstdead,
+# surv_data <- list(survtable=survtable,
+#                   firstdead=firstdead,
+#                   n=nrow(survtable),
+#                   np=ncol(survtable))
+surv_data <- list(survtable=1-survtable[order(firstdead),],  ## what if i make 0=dead, 1=alive? 
+                  firstdead=firstdead[order(firstdead)],
                   n=nrow(survtable),
                   np=ncol(survtable))
+surv_data$firstmult <- which.max(surv_data$firstdead>1)
 
 # JAGS controls
 niter <- 10000
-ncores <- parallel::detectCores()-1
+ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
 
 {
   tstart <- Sys.time()
@@ -471,15 +499,17 @@ ncores <- parallel::detectCores()-1
 
 # checking output & assessing convergence (all looks good)
 # nbyname(surv_jags_out)
-# par(mfrow=c(3,2))
+# par(mfrow=c(2,2))
 # plotRhats(surv_jags_out)
 # traceworstRhat(surv_jags_out)
 
 
 # plot 50 & 95% credible intervals for each p!
 par(mfrow=c(1,1))
+par(mar=c(6.1, 4.1, 4.1, 2.1))
 caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np))  # 50 & 95% credible intervals for each p!
 axis(side=1, at=1:surv_data$np, mnDates[-1], las=2)
+par(mar=parmar)
 
 # ppost <- jags_df(surv_jags_out, p="p")
 pmed <- surv_jags_out$q50$p
@@ -504,4 +534,21 @@ for(j in 2:ncol(survtable)) {
   raw_p[j] <- sum(survtable[,j-1]==0 & survtable[,j]==1, na.rm=T)/raw_n[j]
 }
 points(raw_p)  # always lower... did i do it right??
-table(survtable[,12], survtable[,13], useNA="always")   ### starting to check....
+# table(survtable[,2], survtable[,3], useNA="always")   ### starting to check....
+# 
+# for(j in 2:ncol(survtable)) {
+#   temptable <- table(survtable[,j-1], survtable[,j], useNA="always")
+#   raw_n[j] <- sum(temptable[1,1:2])
+#   raw_p[j] <- temptable[1,2]/raw_n[j]
+# }
+
+# plo <- raw_p - 2*sqrt(raw_p*(1-raw_p)/(raw_n-1))
+# phi <- raw_p + 2*sqrt(raw_p*(1-raw_p)/(raw_n-1))
+# points(plo, pch="-")
+# points(phi, pch="-")
+
+# table: 
+# - confirmed alive at j-1
+# - confirmed newly dead at j
+# - unknown at j-1 with %% avg mort
+# - unknown at j with %% avg mort
