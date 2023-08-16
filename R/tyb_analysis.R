@@ -394,8 +394,7 @@ for(i in 1:nrow(upm1)) {
 axis(side=2, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
 par(mar=parmar)  # resetting margins to default state
 
-## I SHOULD BE CONSIDERING MORTALITY IN THIS
-with(telemdata, table(current_state, flight_num))
+
 
 
 
@@ -403,14 +402,37 @@ with(telemdata, table(current_state, flight_num))
 
 
 
-## survival analysis thing? might be cool
+#### survival analysis thing? might be cool
+
+## NEW NEW STRATEGY:
+# - insert columns corresponding to dates of tag deployment, insert alive then
+# - define a vector of flight date when first present
+# -    second tag deployment is basically concurrent with 3rd flight: say 4th flight
+# -    third tag deployment slightly before 5th flight: say 6th flight
+tagdate <- as.Date(as.character(telem3d$tagging_date[,1]), format="%m/%d/%Y")
+tagdatecut <- as.numeric(cut(tagdate, as.Date(c("2018-09-01","2019-01-01","2019-09-01","2020-01-01"))))
+# table(tagdate, tagdatecut)  # check that this cutting strategy worked
 
 # define survival table
 # - each row is an individual
 # - each column is a flight event (not counting tagging)
 # - 0=alive, 1=dead, NA=not found
 survtable <- telem3d$current_state_num[,-1]            # take out tagging event
-survtable <- survtable[rowMeans(is.na(survtable))<1,]  # take out indivs that were never found
+survtable <- cbind(ifelse(tagdatecut==1, 0, NA), survtable)  # insert survival corresponding to first tagging event
+survtable <- cbind(survtable[,1:3],
+                   ifelse(tagdatecut==2, 0, NA),
+                   survtable[,4:ncol(survtable)])
+survtable <- cbind(survtable[,1:6],
+                   ifelse(tagdatecut==3, 0, NA),
+                   survtable[,7:ncol(survtable)])
+
+# this will return flight first fully present
+# that is, the first flight AFTER entry 
+firstpresent <- c(2, 5, 8)[tagdatecut]  
+
+# take out indivs that were never found
+# firstpresent <- firstpresent[rowMeans(is.na(survtable))<1]
+# survtable <- survtable[rowMeans(is.na(survtable))<1,]  
 
 # define a vector as the first event each individual was encountered dead
 # once an individual is dead, it stays dead: does not contribute anything to prob model
@@ -424,10 +446,11 @@ for(i in 1:nrow(survtable)) {
       if(survtable[i,j]==1) {
         founddead<-T
         firstdead[i] <- j
+        survtable[i,j:ncol(survtable)] <- 1  # once it's dead, it stays dead
       }
       if(survtable[i,j]==0) {
         if(is.na(firstalive[i])) firstalive[i] <- j
-        survtable[i, firstalive[i]:j] <- 0 
+        survtable[i, firstalive[i]:j] <- 0   # backfilling alive to point of entry
       }
     }
     j <- j+1
@@ -436,6 +459,8 @@ for(i in 1:nrow(survtable)) {
 }
 firstdead[is.na(firstdead)] <- ncol(survtable)  # necessary for Bayesian model to function
 
+survtable <- 1-survtable ## make 0=dead, 1=alive !!!!!!
+
 
 # Bayesian model
 # - Of interest is parameter vector p[], which represents the probability of
@@ -443,48 +468,29 @@ firstdead[is.na(firstdead)] <- ncol(survtable)  # necessary for Bayesian model t
 # - If an individual is not observed (has value NA) in a given survey, the unobserved
 #   state will be treated as an unknown parameter
 
-library(jagsUI)
-library(jagshelper)
 # skeleton("surv")
 # specify model
 surv_jags <- tempfile()
-# cat('model {
-#   for(i in 1:n) {                       # for each individual
-#     for(j in 1:firstdead[i]) {          # for each survey
-#       survtable[i,j] ~ dbern(p[j])   ### this does not account for prev time step!!
-#     }
-#   }
-#   for(j in 1:np) {
-#     p[j] ~ dbeta(.1,.1)
-#   }
-# }', file=surv_jags)
 cat('model {
-  for(i in 1:n) {                       # for each individual
-    survtable[i,1] ~ dbern(p[1])  # first observation
-  }
-  for(i in firstmult:n) {  
-    for(j in 2:firstdead[i]) {          # for each survey
-      survtable[i,j] ~ dbin(p[j], survtable[i,j-1])  ## what if i make 0=dead, 1=alive?   
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present   
     }
   }
   for(j in 1:np) {
-    p[j] ~ dbeta(5,5)
+    p[j] ~ dbeta(.5,.5)
   }
 }', file=surv_jags)
 
 # bundle data to pass into JAGS
-# surv_data <- list(survtable=survtable,
-#                   firstdead=firstdead,
-#                   n=nrow(survtable),
-#                   np=ncol(survtable))
-surv_data <- list(survtable=1-survtable[order(firstdead),],  ## what if i make 0=dead, 1=alive? 
-                  firstdead=firstdead[order(firstdead)],
+surv_data <- list(survtable=survtable,  
+                  firstdead=firstdead,
+                  firstpresent=firstpresent,
                   n=nrow(survtable),
-                  np=ncol(survtable))
-surv_data$firstmult <- which.max(surv_data$firstdead>1)
+                  np=ncol(survtable)-1)
 
 # JAGS controls
-niter <- 10000
+niter <- 100000
 ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
 
 {
@@ -498,20 +504,37 @@ ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
 }
 
 # checking output & assessing convergence (all looks good)
-# nbyname(surv_jags_out)
-# par(mfrow=c(2,2))
-# plotRhats(surv_jags_out)
-# traceworstRhat(surv_jags_out)
+nbyname(surv_jags_out)
+par(mfrow=c(2,2))
+plotRhats(surv_jags_out)
+traceworstRhat(surv_jags_out)
 
 
 # plot 50 & 95% credible intervals for each p!
 par(mfrow=c(1,1))
+parmar <- par("mar")  # storing original margin settings
 par(mar=c(6.1, 4.1, 4.1, 2.1))
 caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np))  # 50 & 95% credible intervals for each p!
-axis(side=1, at=1:surv_data$np, mnDates[-1], las=2)
+mnDates1 <- as.character(mnDates)
+plotdates <- c("Capture 1", mnDates1[2:3],"Capture 2", mnDates1[4:5],"Capture 3",mnDates1[6:length(mnDates)])
+axis(side=1, at=0:surv_data$np, plotdates, las=2)
+
+
+# plotting survival & survival probability
+par(mfrow=c(1,1))
+par(mar=c(6.1, 4.1, 4.1, 2.1))
+plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+     xlab="", ylab="Survival Probability", xaxt="n")
+for(i in 1:nrow(survtable)) {
+  jmeans <- surv_jags_out$mean$survtable[i,] + runif(ncol(surv_jags_out$mean$survtable), -0.01, 0.01)
+  jdates <- 1:ncol(surv_jags_out$mean$survtable) + runif(ncol(surv_jags_out$mean$survtable), -0.05, 0.05)
+  lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+  points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+}
+axis(side=1, at=1:length(plotdates), plotdates, las=2)
 par(mar=parmar)
 
-# ppost <- jags_df(surv_jags_out, p="p")
+
 pmed <- surv_jags_out$q50$p
 pse <- surv_jags_out$sd$p
 plo <- surv_jags_out$q2.5$p
@@ -521,34 +544,90 @@ ci95 <- paste0("(",round(plo, ndigits)," - ", round(phi, ndigits),")")
 ptable <- data.frame(p_est=round(pmed, ndigits),
                      SE=round(pse, ndigits),
                      CI95=ci95)
-rownames(ptable) <- mnDates[-1]
+rownames(ptable) <- plotdates[-1]
 ptable   # print to console
 knitr::kable(ptable)  # print to markdown
 
 
-# I'm so curious how this compares to raw estimate (without modeling unknown states)
-raw_n <- sum(!is.na(survtable[,1]))
-raw_p <- mean(survtable[,1], na.rm=T)
+
+
+# for checking a sequence of logical vectors for each time step:
+# - known alive at j-1, known alive at j
+# - known alive at j-1, known dead at j
+# - known alive at j-1, unknown at j
+# - known dead at j-1, known dead at j
+# - unknown at j-1, known dead at j
+# - unknown at j-1, unknown at j
+transition_arr <- array(dim=c(nrow(survtable), ncol(survtable)-1, 6))
 for(j in 2:ncol(survtable)) {
-  raw_n[j] <- sum(survtable[,j-1]==0 & !is.na(survtable[,j]), na.rm=T)
-  raw_p[j] <- sum(survtable[,j-1]==0 & survtable[,j]==1, na.rm=T)/raw_n[j]
+  transition_arr[,j-1,1] <- survtable[,j-1]==1 & survtable[,j]==1 & !is.na(survtable[,j-1]) & !is.na(survtable[,j])
+  transition_arr[,j-1,2] <- survtable[,j-1]==1 & survtable[,j]==0 & !is.na(survtable[,j-1]) & !is.na(survtable[,j])
+  transition_arr[,j-1,3] <- survtable[,j-1]==1 & !is.na(survtable[,j-1]) & is.na(survtable[,j])
+  transition_arr[,j-1,4] <- survtable[,j-1]==0 & survtable[,j]==0 & !is.na(survtable[,j-1]) & !is.na(survtable[,j])
+  transition_arr[,j-1,5] <- survtable[,j]==0 & is.na(survtable[,j-1]) & !is.na(survtable[,j])
+  transition_arr[,j-1,6] <- is.na(survtable[,j-1]) & is.na(survtable[,j])
 }
-points(raw_p)  # always lower... did i do it right??
-# table(survtable[,2], survtable[,3], useNA="always")   ### starting to check....
-# 
-# for(j in 2:ncol(survtable)) {
-#   temptable <- table(survtable[,j-1], survtable[,j], useNA="always")
-#   raw_n[j] <- sum(temptable[1,1:2])
-#   raw_p[j] <- temptable[1,2]/raw_n[j]
-# }
+for(i in 1:length(firstpresent)) {  # accounting for entry to the system
+  if(firstpresent[i] > 2) transition_arr[i, 1:(firstpresent[i]-2), ] <- NA
+}
 
-# plo <- raw_p - 2*sqrt(raw_p*(1-raw_p)/(raw_n-1))
-# phi <- raw_p + 2*sqrt(raw_p*(1-raw_p)/(raw_n-1))
-# points(plo, pch="-")
-# points(phi, pch="-")
+# summary table should have:
+# - number known alive at j-1, known alive at j
+# - number known alive at j-1, known dead at j
+# - number known alive at j-1, unknown at j (avg prob alive at j)
+# - number known dead at j-1, known dead at j
+# - number unknown at j-1, known dead at j (avg prob alive at j-1)
+# - number unknown at j-1, unknown at j (avg prob alive at j-1, avg prob alive at j)
+transition_mat <- apply(transition_arr, 2:3, sum, na.rm=T)  # raw sums
+survprob <- surv_jags_out$mean$survtable  # grabbing the survival matrix from jags output
+case3_avgprob_j <- case5_avgprob_j1 <- case6_avgprob_j1 <- case6_avgprob_j <- rep(NA, nrow(transition_mat))
+for(j in 2:(nrow(transition_mat)+1)) {
+  case3_avgprob_j[j-1] <- mean(survprob[transition_arr[,j-1,3], j], na.rm=T)
+  case5_avgprob_j1[j-1] <- mean(survprob[transition_arr[,j-1,5], j-1], na.rm=T)
+  case6_avgprob_j1[j-1] <- mean(survprob[transition_arr[,j-1,6], j-1], na.rm=T)
+  case6_avgprob_j[j-1] <- mean(survprob[transition_arr[,j-1,6], j], na.rm=T)
+}
+case3_avgprob_j[is.nan(case3_avgprob_j)] <- 0
+case5_avgprob_j1[is.nan(case5_avgprob_j1)] <- 0
+case6_avgprob_j1[is.nan(case6_avgprob_j1)] <- 0
+case6_avgprob_j[is.nan(case6_avgprob_j)] <- 0
+transition_tbl <- data.frame(case1=transition_mat[,1],
+                             case2=transition_mat[,2],
+                             case3=paste0(transition_mat[,3], " (", round(100*case3_avgprob_j),"%)"),
+                             case4=transition_mat[,4],
+                             case5=paste0(transition_mat[,5], " (", round(100*case5_avgprob_j1),"%)"),
+                             case6=paste0(transition_mat[,6], " (", round(100*case6_avgprob_j1),"%, ", round(100*case6_avgprob_j),"%)"),
+                             p_raw=round(transition_mat[,1]/rowSums(transition_mat[,1:2]), 3),
+                             p_adj=round((transition_mat[,1] + (transition_mat[,3]*case3_avgprob_j) + (transition_mat[,6]*case6_avgprob_j))/
+                               (rowSums(transition_mat[,1:3]) + (transition_mat[,5]*case5_avgprob_j1) + (transition_mat[,6]*case6_avgprob_j1)), 3),
+                             p_bayes=round(pmed, 3)
+)
+rownames(transition_tbl) <- plotdates[-1]
+transition_tbl  # print to console
+kable(transition_tbl)  # print to Markdown
 
-# table: 
-# - confirmed alive at j-1
-# - confirmed newly dead at j
-# - unknown at j-1 with %% avg mort
-# - unknown at j with %% avg mort
+
+## how do raw and adjusted probability estimates compare to Bayesian model?
+# plot 50 & 95% credible intervals for each p!
+par(mfrow=c(1,1))
+par(mar=c(6.1, 4.1, 4.1, 2.1))
+caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np))  # 50 & 95% credible intervals for each p!
+mnDates1 <- as.character(mnDates)
+plotdates <- c("Capture 1", mnDates1[2:3],"Capture 2", mnDates1[4:5],"Capture 3",mnDates1[6:length(mnDates)])
+axis(side=1, at=0:surv_data$np, plotdates, las=2)
+
+points(transition_tbl$p_raw)
+points(transition_tbl$p_adj, pch=16)
+legend("bottomright", legend=c("p raw", "p adjusted"), pch=c(1,16))
+
+
+# should look at how many days elapsed between events??
+mnTagdates <- tapply(tagdate, tagdatecut, mean) %>% 
+  round %>% 
+  unname %>%
+  as.Date(origin=as.Date("1970-01-01"))
+
+allMnDates <- sort(c(mnDates[-1], mnTagdates)) %>% unname
+diffs <- diff(allMnDates) %>% as.numeric
+
+plot((1-pmed)~diffs)

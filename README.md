@@ -20,5 +20,12 @@ http://www.adfg.alaska.gov/FedAidPDFs/ROP.SF.3F.2018.10.pdf
   * Reads & processes data
   * Runs analyses
     * Length composition
+      * means, proportions (binned)
+      * also by river section - evidence of differences found
+    * Identifying areas of relatively high density
+      * kernel density (network)
+      * kernel density (linear)
+    * Estimation of survival parameters between survey events
+     * Bayesian state-space model in which un-observed survival is modeled as unobserved parameter
 
 
