@@ -296,15 +296,9 @@ for(i in 2:ncol(telem3d$upriver)) {  # starting at 2 to not include tagging date
 ### THINK ABOUT HOW TO VISUALIZE THIS BETTER, PERHAPS SPATIALLY
 
 
-# proportion
-
-
 
 ## run timing??
 
-
-
-## estimate proportions within each river section, per survey
 
 
 
@@ -397,12 +391,93 @@ par(mar=parmar)  # resetting margins to default state
 
 
 
+### estimate proportions within each river section, per survey
+# note: combined Yukon with Lower!!
+
+telemdata1$section[telemdata1$section=="Yukon"] <- "Lower"
+sectiontable_alive <- with(telemdata1, table(flight_num, section))
+mosaicplot(sectiontable_alive, col=grey.colors(3, rev=T), main="", xlab="Flight Number", ylab="")
+chisq.test(sectiontable_alive)  # weak evidence of difference in proportions
+
+n_section <- rowSums(sectiontable_alive)
+p_section <- sectiontable_alive/n_section
+se_section <- sqrt(p_section*(1-p_section)/n_section)
+
+proptable <- matrix(NA,nrow=nrow(p_section), ncol=3*ncol(p_section))
+proptable[,c(1,4,7)] <- sectiontable_alive
+proptable[,c(2,5,8)] <- round(p_section, 3)
+proptable[,c(3,6,9)] <- round(se_section, 3)
+
+rownames(proptable) <- rownames(sectiontable_alive)
+colnames(proptable) <- apply(expand.grid(c("n","p_hat","SE(p_hat)"),colnames(sectiontable_alive)), 1, paste, collapse=" ")
+
+proptable         # print to console
+kable(proptable)  # print to Markdown
+
+
+
 
 ## describe seasonal distributions and migrations (this will be the big one)
+# - homerange by individual
+hr <- homerange(unique=telemdata1$unique_id_num,
+                survey=telemdata1$flight_num,
+                seg=telemdata1$seg,
+                vert=telemdata1$vert,
+                rivers=tyb_trim)
+hr_table <- hr$ranges
+hr_table$range <- hr_table$range/1000
+hist(hr_table$range, main="", xlab="Minimum homerange (km)")
+hr_table[which.max(hr_table$range),]
+par(mfrow=c(1,1))
+plot(tyb_trim)
+riverpoints(seg=telemdata1$seg[telemdata1$unique_id_num==115],
+            vert=telemdata1$vert[telemdata1$unique_id_num==115],
+            rivers=tyb_trim, pch=16)
+#### seems to be a bug in homerange??  maybe it's fine
+# - maybe it's just a bug in plot.homerange: tries to plot for indiv 28
+
+
+# what if we did total distance INSTEAD of homerange?
+# - for each individual: subset, sort by date, calculate distance sequentially
+indiv <- sort(unique(telemdata1$unique_id_num))
+nobs <- cumuldist <- rep(NA, length(indiv))
+for(i in 1:length(indiv)) {
+  # print(i)
+  d1 <- telemdata1[telemdata1$unique_id_num==indiv[i],]
+  d2 <- d1[order(d1$date),]
+  nobs[i] <- nrow(d2)
+  cumuldist[i] <- 0
+  if(nrow(d2)>1) {
+    for(irow in 2:nrow(d2)) {
+      cumuldist[i] <- cumuldist[i] + riverdistance(startseg=d2$seg[irow-1],
+                                                   startvert=d2$vert[irow-1],
+                                                   endseg=d2$seg[irow],
+                                                   endvert=d2$vert[irow],
+                                                   rivers=tyb_trim)/1000 # make it km
+    }
+  }
+}
+dtab <- data.frame(nobs,cumuldist)
+rownames(dtab) <- indiv
+hist(dtab$cumuldist)
+plot(nobs, cumuldist)
+boxplot(cumuldist~nobs)
+hist(cumuldist/(nobs-1))
+plot(nobs, cumuldist/(nobs-1))
+boxplot(cumuldist/(nobs-1) ~ nobs)  # seems consistent enough to use as metric
+
+
+# - movement by individual
+#    - ~size, ~stock, ~avg upriver position
+
+# - percent overlap between each pair of surveys (homerange) - might not do this
+
+
 
 
 
 #### survival analysis thing? might be cool
+# WRITE THIS UP
 
 ## NEW NEW STRATEGY:
 # - insert columns corresponding to dates of tag deployment, insert alive then
@@ -621,13 +696,113 @@ points(transition_tbl$p_adj, pch=16)
 legend("bottomright", legend=c("p raw", "p adjusted"), pch=c(1,16))
 
 
-# should look at how many days elapsed between events??
-mnTagdates <- tapply(tagdate, tagdatecut, mean) %>% 
-  round %>% 
-  unname %>%
-  as.Date(origin=as.Date("1970-01-01"))
+# # should look at how many days elapsed between events??
+# mnTagdates <- tapply(tagdate, tagdatecut, mean) %>% 
+#   round %>% 
+#   unname %>%
+#   as.Date(origin=as.Date("1970-01-01"))
+# 
+# allMnDates <- sort(c(mnDates[-1], mnTagdates)) %>% unname
+# diffs <- diff(allMnDates) %>% as.numeric
+# 
+# plot((1-pmed)~diffs)
 
-allMnDates <- sort(c(mnDates[-1], mnTagdates)) %>% unname
-diffs <- diff(allMnDates) %>% as.numeric
 
-plot((1-pmed)~diffs)
+
+### does survival/mortality differ by section?? harvest certainly does
+
+# build section matrix from telem3d$section to correspond with survtable
+# - insert columns for capture events (take entries from original column 1)
+# - for NA, impute highest-frequency section for each row (individual)
+# - combine Lower and Yukon
+
+# recoding
+sectiontable <- telem3d$section
+sectiontable[sectiontable=="Lower"] <- 1
+sectiontable[sectiontable=="Yukon"] <- 1
+sectiontable[sectiontable=="Middle"] <- 2
+sectiontable[sectiontable=="Upper"] <- 3
+sectiontable <- matrix(as.numeric(sectiontable), nrow=nrow(sectiontable), ncol=ncol(sectiontable))
+
+# adding columns for capture events
+sectiontagged <- sectiontable[,1]
+sectiontable[,1] <- NA
+sectiontable <- cbind(sectiontable[,1:3], NA, sectiontable[,4:5], NA, sectiontable[,6:ncol(sectiontable)])
+sectiontable[tagdatecut==1, 1] <- sectiontagged[tagdatecut==1]
+sectiontable[tagdatecut==2, 4] <- sectiontagged[tagdatecut==2]
+sectiontable[tagdatecut==3, 7] <- sectiontagged[tagdatecut==3]
+
+# imputing missing values
+themode <- function(x) as.numeric(names(sort(table(x), decreasing=T))[1])
+for(i in 1:nrow(sectiontable)) {
+  sectiontable[i, is.na(sectiontable[i,])] <- themode(sectiontable[i,])
+}
+
+## the next Bayesian model!!
+survsection_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      survtable[i,j] ~ dbin(p[sectiontable[i,j], j-1], survtable[i,j-1])   # for each event present   
+    }
+  }
+  for(i in 1:3) {
+    for(j in 1:np) {
+      p[i,j] ~ dbeta(.5, .5)
+    }
+  }
+}', file=survsection_jags)
+
+# bundle data to pass into JAGS
+survsection_data <- list(survtable=survtable, 
+                         sectiontable=sectiontable,
+                  firstdead=firstdead,
+                  firstpresent=firstpresent,
+                  n=nrow(survtable),
+                  np=ncol(survtable)-1)
+
+# JAGS controls
+niter <- 100000
+ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  survsection_jags_out <- jagsUI::jags(model.file=survsection_jags, data=survsection_data,
+                                parameters.to.save=c("p","survtable"),
+                                n.chains=ncores, parallel=T, n.iter=niter,
+                                n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+
+# checking output & assessing convergence (all looks good)
+nbyname(survsection_jags_out)
+par(mfrow=c(2,2))
+plotRhats(survsection_jags_out)
+traceworstRhat(survsection_jags_out)
+
+caterpillar(survsection_jags_out, p="p", row=1)
+caterpillar(survsection_jags_out, p="p", row=2)
+caterpillar(survsection_jags_out, p="p", row=3)
+
+comparecat(list(as.data.frame(survsection_jags_out$sims.list$p[,1,]),
+                as.data.frame(survsection_jags_out$sims.list$p[,2,]),
+                as.data.frame(survsection_jags_out$sims.list$p[,3,])))
+
+# plotting survival & survival probability
+par(mfrow=c(1,1))
+par(mar=c(6.1, 4.1, 4.1, 2.1))
+plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+     xlab="", ylab="Survival Probability", xaxt="n")
+for(i in 1:nrow(survtable)) {
+  jmeans <- survsection_jags_out$mean$survtable[i,] + runif(ncol(survsection_jags_out$mean$survtable), -0.01, 0.01)
+  jdates <- 1:ncol(survsection_jags_out$mean$survtable) + runif(ncol(survsection_jags_out$mean$survtable), -0.05, 0.05)
+  lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+  points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+}
+axis(side=1, at=1:length(plotdates), plotdates, las=2)
+par(mar=parmar)
+
+
+survsection_jags_out$DIC  # 1263.714
+surv_jags_out$DIC         # 1623.812
