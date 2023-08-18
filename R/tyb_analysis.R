@@ -302,24 +302,28 @@ for(i in 2:ncol(telem3d$upriver)) {  # starting at 2 to not include tagging date
 
 
 
-## identify probable spawning areas in the mainstem Tanana River during late January
+# ## identify probable spawning areas in the mainstem Tanana River during late January
+# ###### THIS IS LONG RUNNING AND IS CURRENTLY COMMENTED OUT
 
-# empirical k-functions 
-# review this methodology!  it is very slow and doesn't seem to gain anything
 telemdata1 <- telemdata %>% filter(flight_num>=1 & current_state!="dead")
-par(mfrow=c(4,4))
-with(telemdata1, kfunc(seg=seg, vert=vert, survey=mnDate,
-      rivers=tyb_trim, envreps=100, maxdist=200000))
+telem_alive <- telemdata %>% filter(current_state!="dead")
 
-# kernel density (network)
-# darn, this doesn't seem to gain anything either
-network_dens <- with(telemdata1, makeriverdensity(seg=seg, vert=vert, survey=mnDate,
-                                       rivers=tyb_trim, bw=20*1000))
-# plotriverdensitypoints(network_dens)  # maybe more points than needed
-par(mfrow=c(4,4))
-plot(network_dens, scalebyN=F)
-par(mfrow=c(1,1))
-plot(network_dens, points=F, scalebyN = F)  # maybe I should try animating this
+# 
+# # empirical k-functions 
+# # review this methodology!  it is very slow and doesn't seem to gain anything
+# par(mfrow=c(4,4))
+# with(telemdata1, kfunc(seg=seg, vert=vert, survey=mnDate,
+#       rivers=tyb_trim, envreps=100, maxdist=200000))
+# 
+# # kernel density (network)
+# # darn, this doesn't seem to gain anything either
+# network_dens <- with(telemdata1, makeriverdensity(seg=seg, vert=vert, survey=mnDate,
+#                                        rivers=tyb_trim, bw=20*1000))
+# # plotriverdensitypoints(network_dens)  # maybe more points than needed
+# par(mfrow=c(4,4))
+# plot(network_dens, scalebyN=F)
+# par(mfrow=c(1,1))
+# plot(network_dens, points=F, scalebyN = F)  # maybe I should try animating this
 
 # kernel density (linear)
 bandwidth <- 50  # kernel bandwidth, in km (trial and error)
@@ -419,10 +423,10 @@ kable(proptable)  # print to Markdown
 
 ## describe seasonal distributions and migrations (this will be the big one)
 # - homerange by individual
-hr <- homerange(unique=telemdata1$unique_id_num,
-                survey=telemdata1$flight_num,
-                seg=telemdata1$seg,
-                vert=telemdata1$vert,
+hr <- homerange(unique=telem_alive$unique_id_num,
+                survey=telem_alive$flight_num,
+                seg=telem_alive$seg,
+                vert=telem_alive$vert,
                 rivers=tyb_trim)
 hr_table <- hr$ranges
 hr_table$range <- hr_table$range/1000
@@ -430,8 +434,8 @@ hist(hr_table$range, main="", xlab="Minimum homerange (km)")
 hr_table[which.max(hr_table$range),]
 par(mfrow=c(1,1))
 plot(tyb_trim)
-riverpoints(seg=telemdata1$seg[telemdata1$unique_id_num==115],
-            vert=telemdata1$vert[telemdata1$unique_id_num==115],
+riverpoints(seg=telem_alive$seg[telem_alive$unique_id_num==115],
+            vert=telem_alive$vert[telem_alive$unique_id_num==115],
             rivers=tyb_trim, pch=16)
 #### seems to be a bug in homerange??  maybe it's fine
 # - maybe it's just a bug in plot.homerange: tries to plot for indiv 28
@@ -439,13 +443,14 @@ riverpoints(seg=telemdata1$seg[telemdata1$unique_id_num==115],
 
 # what if we did total distance INSTEAD of homerange?
 # - for each individual: subset, sort by date, calculate distance sequentially
-indiv <- sort(unique(telemdata1$unique_id_num))
-nobs <- cumuldist <- rep(NA, length(indiv))
+indiv <- sort(unique(telem_alive$unique_id_num))
+nobs <- cumuldist <- ndays <- rep(NA, length(indiv))
 for(i in 1:length(indiv)) {
   # print(i)
-  d1 <- telemdata1[telemdata1$unique_id_num==indiv[i],]
+  d1 <- telem_alive[telem_alive$unique_id_num==indiv[i],]
   d2 <- d1[order(d1$date),]
   nobs[i] <- nrow(d2)
+  ndays[i] <- d2$date %>% range %>% diff %>% as.numeric
   cumuldist[i] <- 0
   if(nrow(d2)>1) {
     for(irow in 2:nrow(d2)) {
@@ -457,7 +462,7 @@ for(i in 1:length(indiv)) {
     }
   }
 }
-dtab <- data.frame(nobs,cumuldist)
+dtab <- data.frame(nobs, ndays, cumuldist)
 rownames(dtab) <- indiv
 hist(dtab$cumuldist)
 plot(nobs, cumuldist)
@@ -465,10 +470,55 @@ boxplot(cumuldist~nobs)
 hist(cumuldist/(nobs-1))
 plot(nobs, cumuldist/(nobs-1))
 boxplot(cumuldist/(nobs-1) ~ nobs)  # seems consistent enough to use as metric
+boxplot(cumuldist/ndays ~ nobs)  # less consistent, one big outlier
+hist(cumuldist/ndays, breaks=10)
+
+## looking at the top mover
+dtab[which.max(cumuldist),]
+par(mfrow=c(1,1))
+plot(tyb_trim, empty=T, linecol="grey")
+riverpoints(seg=telemdata$seg[telemdata$unique_id_num==115],
+            vert=telemdata$vert[telemdata$unique_id_num==115],
+            rivers=tyb_trim, pch=16)
+text(x=telemdata$AlbersX[telemdata$unique_id_num==115],
+     y=telemdata$AlbersY[telemdata$unique_id_num==115],
+     labels=telemdata$flight_num[telemdata$unique_id_num==115],
+     pos=1, cex=1.5)
+
+
+## ok, bundle all summary metrics
+dtab$dist_per_obs <- dtab$cumuldist/(dtab$nobs-1)   # distance per pair of observations
+dtab$dist_per_day <- dtab$cumuldist/ndays
+dtab$homerange <- 0
+for(i in 1:nrow(hr_table)) dtab$homerange[rownames(dtab)==hr_table$ID[i]] <- hr_table$range[i]
 
 
 # - movement by individual
-#    - ~size, ~stock, ~avg upriver position
+#    - ~size, ~stock, ~avg upriver position, ~life_history, ~tagging_habitat, ~section mode
+
+# defining per-individual summary metrics
+themode <- function(x) unname(names(sort(table(x), decreasing=T))[1])
+sectionmode <- unname(apply(telem3d$section, 1, themode))  # river section most often observed
+sectionmode[sectionmode=="Yukon"] <- "Lower"       # combining Yukon with Lower
+avgupriver <- rowMeans(telem3d$upriver, na.rm=T)   # avg upriver position (km)
+
+## lots of exploratory plots
+for(imetric in c(6,3:5)) { # this was just a logical order of columns
+  par(mfrow=c(2,4))
+  boxplot(dtab[,imetric] ~ sectionmode, xlab="River section", ylab=names(dtab)[imetric])
+  boxplot(dtab[,imetric] ~ telem3d$tagging_location[,1], xlab="Tagging location", ylab=names(dtab)[imetric])
+  boxplot(dtab[,imetric] ~ telem3d$tagging_habitat[,1], xlab="Tagging habitat", ylab=names(dtab)[imetric])
+  boxplot(dtab[,imetric] ~ telem3d$life_history[,1], xlab="Life history", ylab=names(dtab)[imetric])
+  plot(dtab[,imetric] ~ telem3d$total_length[,1], xlab="Total length (mm)", ylab=names(dtab)[imetric])
+  plot(dtab[,imetric] ~ telem3d$total_length[,1], xlab="Total length (mm) - log scale", ylab=paste(names(dtab)[imetric], "- log scale"), log="xy")
+  plot(dtab[,imetric] ~ avgupriver, xlab="Avg upriver position (km)", ylab=names(dtab)[imetric])
+  plot(dtab[,imetric] ~ avgupriver, xlab="Avg upriver position (km)", ylab=paste(names(dtab)[imetric], "- log scale"), log="y")
+}
+par(mfrow=c(2,2))
+boxplot(telem3d$total_length[,1] ~ sectionmode, xlab="River section", ylab="Total length (mm)")
+boxplot(telem3d$total_length[,1] ~ telem3d$life_history[,1], xlab="Life history", ylab="Total length (mm)")
+boxplot(telem3d$total_length[,1] ~ telem3d$tagging_habitat[,1], xlab="Tagging habitat", ylab="Total length (mm)")
+mosaicplot(table(sectionmode, telem3d$life_history[,1]), xlab="River section", ylab="Life history", main="",col=T)
 
 # - percent overlap between each pair of surveys (homerange) - might not do this
 
