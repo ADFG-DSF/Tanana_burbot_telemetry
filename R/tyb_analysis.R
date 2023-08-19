@@ -520,6 +520,93 @@ boxplot(telem3d$total_length[,1] ~ telem3d$life_history[,1], xlab="Life history"
 boxplot(telem3d$total_length[,1] ~ telem3d$tagging_habitat[,1], xlab="Tagging habitat", ylab="Total length (mm)")
 mosaicplot(table(sectionmode, telem3d$life_history[,1]), xlab="River section", ylab="Life history", main="",col=T)
 
+lengthcut <- cut(telem3d$total_length[,1], breaks=c(600, 700, 800, 900, 1050))
+uprivercut <- cut(avgupriver, breaks=c(0, 300, 500, 800, 1000))
+par(mfrow=c(2,4))
+par(mar=c(7.1, 4.1, 4.1, 2.1))
+for(imetric in c(6,3:5)) { # this was just a logical order of columns
+  boxplot(dtab[,imetric] ~ lengthcut, xlab="", main="by Total length (mm)", ylab=names(dtab)[imetric], las=2)
+}
+for(imetric in c(6,3:5)) { # this was just a logical order of columns
+  boxplot(dtab[,imetric] ~ uprivercut, xlab="", main="by Upriver position (km)", ylab=names(dtab)[imetric], las=2)
+}
+par(mar=parmar)
+
+### to do:
+### - decide which distance metric(s) to keep - distance per obs, plus either homerange OR cumulative distance
+### - table mean / se OR proportions - decide which
+### - anova/chi^2??
+
+
+
+
+# - table of distances between sequential surveys
+# sequentialdists <- riverdistanceseq(unique=telem_alive$unique_id_num,
+#                                     survey=telem_alive$flight_num,
+#                                     seg=telem_alive$seg,
+#                                     vert=telem_alive$vert,
+#                                     rivers=tyb_trim)
+# this isn't right - change 0.1 to other numbers as needed
+tag_breaks <- as.Date(c("2018-09-01","2019-01-01","2019-09-01","2020-01-01"))
+# table(telem_alive$date[telem_alive$flight_num==0.1])
+# table(telem_alive$date, telem_alive$flight_num)
+telem_alive <- telemdata %>% filter(current_state!="dead")
+telem_alive$flight_num[telem_alive$flight_num==0.1 & telem_alive$date>tag_breaks[2] & telem_alive$date<tag_breaks[3]] <- 3  # for plot
+telem_alive$flight_num[telem_alive$flight_num==0.1 & telem_alive$date>tag_breaks[3] & telem_alive$date<tag_breaks[4]] <- 5  # for plot
+
+sequentialdists <- riverdistanceseq(unique=telem_alive$unique_id_num,
+                                    survey=telem_alive$flight_num,
+                                    seg=telem_alive$seg,
+                                    vert=telem_alive$vert,
+                                    rivers=tyb_trim)/1000 # make it km
+upstreamdists <- upstreamseq(unique=telem_alive$unique_id_num,
+                                    survey=telem_alive$flight_num,
+                                    seg=telem_alive$seg,
+                                    vert=telem_alive$vert,
+                                    rivers=tyb_trim)/1000 # make it km
+par(mfrow=c(1,2))
+plotseq(sequentialdists, ylab="River distance (km)")
+plotseq(upstreamdists, ylab="Upstream rive distance (km)")
+
+mean_tbl <- function(x) {
+  n <- apply(!is.na(x), 2, sum)
+  mn <- round(apply(x, 2, mean, na.rm=T), 2)
+  SD <- round(apply(x, 2, sd, na.rm=T), 2)
+  SE <- round(SD/sqrt(n), 2)
+  return(cbind(n,mn,SD,SE))
+}
+mean_tbl(sequentialdists)
+kable(mean_tbl(sequentialdists))
+mean_tbl(upstreamdists)
+kable(mean_tbl(upstreamdists))
+
+
+
+### - need to figure out homerange / overlap stuff
+### - want to do overlap of tagged section, for each survey date
+# hr_trial <- homerange(unique=telem_alive$tagging_location,
+#                       # survey=telem_alive$flight_num,
+#                       seg=telem_alive$seg,
+#                       vert=telem_alive$vert,
+#                       rivers=tyb_trim) %>% homerangeoverlap
+overlaps <- list()
+flights <- sort(unique(telem_alive$flight_num))
+for(i in 1:length(flights)) {
+  hri <- with(subset(telem_alive, flight_num==flights[i]),
+              homerange(unique=tagging_location, seg=seg, vert=vert, rivers=tyb_trim))
+  par(mfrow=c(2,2))
+  plot(hri)
+  overlaps[[i]] <- homerangeoverlap(hri)$prop_both
+}
+overlaps_tbl <- data.frame(LowerMiddle=round(sapply(overlaps, function(x) x[1,2]),3),
+                           MiddleUpper=round(sapply(overlaps, function(x) x[2,3]),3),
+                           LowerUpper=round(sapply(overlaps, function(x) x[1,3]),3))
+rownames(overlaps_tbl) <- flights
+overlaps_tbl
+kable(overlaps_tbl)
+# still would like to plot this
+
+
 # - percent overlap between each pair of surveys (homerange) - might not do this
 
 
