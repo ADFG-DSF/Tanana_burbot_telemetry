@@ -25,6 +25,13 @@ http://www.adfg.alaska.gov/FedAidPDFs/ROP.SF.3F.2018.10.pdf
     * Identifying areas of relatively high density
       * kernel density (network)
       * kernel density (linear)
+    * Proportions in each river section
+      * per survey
+      * per survey, for each tagged stock
+    * Movement by individual - minimum homerange and minimum cumulative distance
+      * also relationships between this and other individual-level variables
+    * Distances between sequential surveys
+    * Overlap in spatial extent 
     * Estimation of survival parameters between survey events
      * Bayesian state-space model in which un-observed survival is modeled as unobserved parameter
 
