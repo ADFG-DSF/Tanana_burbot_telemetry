@@ -17,7 +17,8 @@ library(jagshelper)  # for plotting & model diagnostics
 
 # load data (from folder available on Github)
 load(file="data/tyb.Rdata")  # rivernetwork created from shapefile
-telemdata <- read.csv("data/TananaBurbotTelem.csv")
+# telemdata <- read.csv("data/TananaBurbotTelem.csv")
+telemdata <- read.csv("data/TananaBurbotTelem2.csv")
 head(telemdata)  # looking at the first few rows
 
 
@@ -353,6 +354,227 @@ telem_alive <- telemdata %>% filter(current_state!="dead")
 # plot(network_dens, points=F, scalebyN = F)  # maybe I should try animating this
 
 
+## kernel density (network) version 2.0
+## First objective: show kernel density for surveys identified as spawning season
+## for all individuals (this will not be the same as survey by itself). Identify
+## the survey preceding spawning time for all individuals, and contrast the two.
+## Contrast pre/spawning for all three spawning seasons, and contrast all seasons together.
+
+# using data.frame telem_alive, define a new column for spawning season (where spawning_use is Y)
+telem_alive$spawn <- with(telem_alive, ifelse(!is.na(spawning_use) & spawning_use=="Y",
+                          paste(spawning_season, "spawn", sep="_"), NA))
+
+# then go by individual, and back-fill prespawn, defined as last observation before spawn
+indivs <- sort(unique(telem_alive$unique_id)) # vector of unique individuals
+telem_alive$spawn_diff <- telem_alive$prespawn_diff <- NA # initializing columns
+for(i_indiv in seq_along(indivs)[-300]) {
+  df_indiv <- subset(telem_alive, unique_id==indivs[i_indiv])
+  df_indiv$prespawn <- NA        # this will be prespawn season
+  df_indiv$prespawn_diff <- df_indiv$spawn_diff <- NA   # this will be number of days between prespawn and spawn
+  spawnseasons <- unique(df_indiv$spawn[!is.na(df_indiv$spawn)])
+  df_indiv <- df_indiv[order(df_indiv$date),]  # to make sure these are in order by date
+  for(i_season in seq_along(spawnseasons)) {  # backfilling prespawn...
+    ## backfilling to last-known location...
+    # df_indiv$prespawn[which(df_indiv$spawn==spawnseasons[i_season])-1] <- 
+    #   paste(substr(spawnseasons[i_season], 1, 9), "prespawn", sep="_")
+    # df_indiv$spawn_diff[which(df_indiv$spawn==spawnseasons[i_season])] <-
+    #   diff(df_indiv$date[which(df_indiv$spawn==spawnseasons[i_season])-1:0])
+    # df_indiv$prespawn_diff[which(df_indiv$spawn==spawnseasons[i_season])-1] <-
+    #   diff(df_indiv$date[which(df_indiv$spawn==spawnseasons[i_season])-1:0])
+    # needs to be before spawning survey AND closest to diff of 128
+    
+    ## backfilling to most-comparable date to 2018-2019 spawning season
+    ## that is, closest to 128-day difference
+    diffs <- df_indiv$date[which(df_indiv$spawn==spawnseasons[i_season])] - df_indiv$date
+    df_indiv$prespawn[which.min(abs((diffs-128)[diffs>0]))] <- 
+      paste(substr(spawnseasons[i_season], 1, 9), "prespawn", sep="_")
+    df_indiv$prespawn_diff[which.min(abs((diffs-128)[diffs>0]))] <- 
+      diffs[which.min(abs((diffs-128)[diffs>0]))]
+    df_indiv$spawn_diff[which(df_indiv$spawn==spawnseasons[i_season])] <- 
+      diffs[which.min(abs((diffs-128)[diffs>0]))]
+  }
+  # i_indiv of 302 is a good test case, i_season of 1
+  # print these to test: 
+  # df_indiv$orderdate <- order(df_indiv$date)
+  # print(df_indiv %>% select(c("spawning_use", "spawning_season", "spawn", "prespawn",
+  #                             "spawn_diff", "prespawn_diff", "date", "orderdate")))
+  
+  telem_alive$spawn[as.numeric(rownames(df_indiv))] <-
+    ifelse(!is.na(df_indiv$spawn), df_indiv$spawn, df_indiv$prespawn)
+  telem_alive$spawn_diff[as.numeric(rownames(df_indiv))] <- df_indiv$spawn_diff
+  telem_alive$prespawn_diff[as.numeric(rownames(df_indiv))] <- df_indiv$prespawn_diff
+}
+
+# creating a subset data.frame from just prespawn/spawn surveys
+# can also try a max prespawn/spawn_diff number of days?
+telem_spawn <- subset(telem_alive, !is.na(spawn))
+
+# creating (network) kernel density thing!
+network_dens_spawn <- with(telem_spawn, makeriverdensity(seg=seg, vert=vert, survey=spawn,
+                                                        rivers=tyb_trim, bw=50*1000,
+                                                        kernel="rect"))
+par(mfrow=c(2,2))
+plot(network_dens_spawn, scalebyN = F, maxlwd = 15)
+
+# hacking the structure of a riverdensity object to create an object of contrasts
+network_dens_contrasts <- network_dens_spawn  # copying the existing structure
+densities_contrasts <- list(list(), list(), list())                   # initializing an object that will become the new $densities
+for(i_line in seq_along(network_dens_spawn$densverts)) {
+  densities_contrasts[[1]][[i_line]] <- network_dens_spawn$densities[[2]][[i_line]] - network_dens_spawn$densities[[1]][[i_line]]
+  densities_contrasts[[2]][[i_line]] <- network_dens_spawn$densities[[4]][[i_line]] - network_dens_spawn$densities[[3]][[i_line]]
+  densities_contrasts[[3]][[i_line]] <- network_dens_spawn$densities[[6]][[i_line]] - network_dens_spawn$densities[[5]][[i_line]]
+}
+network_dens_contrasts$densities <- densities_contrasts
+network_dens_contrasts$survey <- as.factor(c("2018_2019 contrast", "2019_2020 contrast", "2020_2021 contrast"))
+
+# plotting!! I hope
+# plot(network_dens_contrasts, bycol=T, bylwd=F, ramp="stoplight", lwd = 3,
+#      main=c("2018_2019 contrast", "2019_2020 contrast", "2020_2021 contrast"),
+#      showN=F, points=F,pwr=1)
+
+## modifying riverdist:::plot.riverdensity to produce a diverging color scheme to 
+## show contrast.  this is an extreme hack!!
+plotriverdensity1 <- function(x,whichplots=NULL,points=TRUE,bycol=TRUE,bylwd=TRUE,maxlwd=10,pwr=0.7,scalebyN=TRUE,ramp="grey",lwd=1,linecol="black",denscol="black",alpha=1,dark=1,showN=TRUE,main=NULL,xlab="",ylab="",add=FALSE,scalebar=TRUE,...) {
+  if(!inherits(x, "riverdensity")) stop("Argument x must be an object returned from makeriverdensity().")
+  if(dark>1 | dark<0) dark <-1
+  if(alpha>1 | alpha<0) alpha <-1
+  densities <- x$densities
+  endptverts <- x$endptverts
+  densverts <- x$densverts
+  seg <- x$pointsegs
+  vert <- x$pointverts
+  survey <- x$survey
+  if(!is.factor(survey)) survey <- as.factor(survey)
+  rivers <- x$rivers
+  if(length(main)==1) main <- rep(main,length(unique(survey)))
+  # if(is.null(main) & length(unique(survey))>1) main <- sort(unique(as.character(survey)))
+  if(is.null(main) & length(unique(survey))>1) main <- levels(survey)
+  
+  lines <- rivers$lines
+  length <- length(lines)
+  xmin <- min(lines[[1]][,1])
+  xmax <- max(lines[[1]][,1])
+  ymin <- min(lines[[1]][,2])
+  ymax <- max(lines[[1]][,2])
+  if(length>1) {
+    for(j in 2:length) {
+      if(min(lines[[j]][,1])<xmin) xmin <- min(lines[[j]][,1])
+      if(max(lines[[j]][,1])>xmax) xmax <- max(lines[[j]][,1])
+      if(min(lines[[j]][,2])<ymin) ymin <- min(lines[[j]][,2])
+      if(max(lines[[j]][,2])>ymax) ymax <- max(lines[[j]][,2])
+    }
+  }
+  
+  nsize <- NA
+  isurvey <- 1
+  # for(surveyi in sort(unique(survey))) {
+  for(surveyi in levels(survey)) {
+    nsize[isurvey] <- length(seg[survey==surveyi])
+    isurvey <- isurvey+1
+  }
+  
+  iisurvey <- 1
+  if(is.null(whichplots)) whichplots <- 1:length(unique(survey))
+  # whichplotsurvey <- (sort(unique(survey)))[whichplots]
+  whichplotsurvey <- (levels(survey))[whichplots]
+  
+  if(!scalebyN){ 
+    isurvey <- 1
+    # for(surveyi in sort(unique(survey))) {
+    for(surveyi in levels(survey)) {
+      for(segi in 1:length(rivers$lines)) {
+        densities[[isurvey]][[segi]] <- densities[[isurvey]][[segi]]*max(nsize[whichplots])/nsize[isurvey]
+      }
+      isurvey <- isurvey+1
+    }
+  }
+  
+  for(surveyi in whichplotsurvey) {
+    isurvey <- whichplots[iisurvey]
+    if(showN) mainforplot <- paste0(main[isurvey],"  (n=",length(seg[survey==surveyi]),")")
+    if(!showN) mainforplot <- main[isurvey]
+    if(!add) plot(c(xmin,xmax),c(ymin,ymax),col="white",cex.axis=.6,asp=1,xlab=xlab,ylab=ylab,main=mainforplot,...=...)
+    
+    for(segi in 1:length(rivers$lines)) {
+      quants <- (densities[[isurvey]][[segi]]/max(unlist(densities)))^pwr
+      if(bycol) {
+        # if(ramp=="grey" | ramp=="gray") {
+        #   cols <- grey((1-quants)*.8)
+        #   denscol <- 1
+        #   linecol <- grey(.8)
+        # }
+        # if(ramp=="red") {
+        #   cols <- rgb(1,(1-quants)*.8,(1-quants)*.8)
+        #   denscol <- 2
+        #   linecol <- rgb(1,.8,.8)
+        # }
+        # if(ramp=="green") {
+        #   cols <- rgb((1-quants)*.8,1,(1-quants)*.8)
+        #   denscol <- 3
+        #   linecol <- rgb(.8,1,.8)
+        # }
+        # if(ramp=="blue") {
+        #   cols <- rgb((1-quants)*.8,(1-quants)*.8,1)
+        #   denscol <- 4
+        #   linecol <- rgb(.8,.8,1)
+        # }
+        # if(ramp=="heat") {
+        #   cols <- heat.colors(1000)[ceiling(900*(1-quants))+1]
+        #   denscol <- heat.colors(1000)[1]
+        #   linecol <- heat.colors(1000)[901]
+        # }
+        # if(ramp=="stoplight") {
+        #   cols <- rainbow(1000)[ceiling(300*(1-quants))+1] 
+        #   denscol <- rainbow(1000)[1] 
+        #   linecol <- rainbow(1000)[301]
+        # }
+        # if(ramp=="rainbow") {
+        #   cols <- rainbow(1000)[ceiling(700*(1-quants))+1]
+        #   denscol <- rainbow(1000)[1] 
+        #   linecol <- rainbow(1000)[701]
+        # }
+        
+        nnn <- max(abs(unlist(densities)))
+        nnn <- max(abs(unlist(densities[[isurvey]])))
+        allthecols <- c(colorRampPalette(c("blue","grey90"))(nnn), colorRampPalette(c("grey90","red"))(nnn)[-1])
+        cols <- allthecols[densities[[isurvey]][[segi]]+nnn]
+        linecol="grey90"
+      }
+      if(bylwd) {
+        lwds <- maxlwd*quants
+      }
+      if(!bycol) cols <- rep(denscol,(length(endptverts[[segi]])-1))
+      if(!bylwd) lwds <- rep(lwd,(length(endptverts[[segi]])-1))
+      
+      if(alpha<1) cols <- adjustcolor(cols,alpha.f=alpha)
+      if(alpha<1) linecol <- adjustcolor(linecol,alpha.f=alpha)
+      if(dark<1) cols <- adjustcolor(cols,red.f=dark,green.f=dark,blue.f=dark)
+      if(dark<1) linecol <- adjustcolor(linecol,red.f=dark,green.f=dark,blue.f=dark)
+      if(dark<1) denscol <- adjustcolor(denscol,red.f=dark,green.f=dark,blue.f=dark)
+      
+      for(vertsi in 1:(length(endptverts[[segi]])-1)) {
+        if(dim(matrix(rivers$lines[[segi]][(endptverts[[segi]][vertsi]):(endptverts[[segi]][vertsi+1]),],ncol=2))[1] > 1) {
+          lines(rivers$lines[[segi]][(endptverts[[segi]][vertsi]):(endptverts[[segi]][vertsi+1]),],lwd=1,col=linecol,lend=1)
+          if(densities[[isurvey]][[segi]][vertsi] != 0) {
+            # lines(rivers$lines[[segi]][(endptverts[[segi]][vertsi]):(endptverts[[segi]][vertsi+1]),],lwd=lwds[vertsi],col=cols[vertsi],lend=1)
+            lines(rivers$lines[[segi]][(endptverts[[segi]][vertsi]):(endptverts[[segi]][vertsi+1]),],
+                  lwd=lwd*(abs(densities[[isurvey]][[segi]])[vertsi]/nnn)^pwr,col=cols[vertsi],lend=1)
+          }
+        }
+      }
+    }
+    if(points) riverpoints(seg=seg[survey==surveyi],vert=vert[survey==surveyi],rivers=rivers,pch=21,bg=0,col=denscol)
+    if(scalebar) riverdist:::scalebar(rivers)
+    iisurvey <- iisurvey+1
+  }
+}
+par(mfrow=c(2,2))
+# par(mfrow=c(1,1))
+plotriverdensity1(network_dens_contrasts, bycol=T, bylwd=F, lwd = 10,
+     main=c("2018_2019 contrast", "2019_2020 contrast", "2020_2021 contrast"),
+     showN=F, points=F,pwr=.7)
+
+
 
 ## kernel density (linear)
 ## THIS IS A SIMPLIFICATION - instead of on the full river network,
@@ -385,6 +607,77 @@ for(i in 1:length(lin_denses)) {
 } # try animating this one too
 
 
+## overlaying all densities
+for(i in 1) {
+  plot(lin_denses[[i]], xlim=range(telemdata1$upriver), ylim=c(0, maxy), col=adjustcolor(1, alpha.f=.3), main="")
+  xx <- with(telemdata1, upriver[flight_num==names(lin_denses)[i]])
+  points(x=xx, y=abs(jitter(rep(0, length(xx)), 0.005)), col=adjustcolor(1, alpha.f=.3))
+}
+for(i in 2:length(lin_denses)) {
+  lines(lin_denses[[i]], xlim=range(telemdata1$upriver), ylim=c(0, maxy), col=adjustcolor(1, alpha.f=.3))
+  xx <- with(telemdata1, upriver[flight_num==names(lin_denses)[i]])
+  points(x=xx, y=abs(jitter(rep(0, length(xx)), 0.005)), col=adjustcolor(1, alpha.f=.3))
+}
+
+## Then showing spawning seasons differently!!
+spawnseasons <- paste(2018:2020, 2019:2021, "spawn", sep="_")
+for(i_season in seq_along(spawnseasons)) {
+  thedensity <- density(telem_spawn$upriver[telem_spawn$spawn==spawnseasons[i_season]], bw=bandwidth)
+  lines(thedensity, lwd=3)
+  text(x=thedensity$x[which.max(thedensity$y)], 
+       y=thedensity$y[which.max(thedensity$y)], 
+       labels=spawnseasons[i_season], pos=c(2,4,4)[i_season], offset=2.5)
+}
+
+## Comparing pre-spawn to spawn one more time
+par(mfrow=c(3,1))
+preseasons <- paste(2018:2020, 2019:2021, "prespawn", sep="_")
+for(i_season in seq_along(spawnseasons)) {
+  thedensity <- density(telem_spawn$upriver[telem_spawn$spawn==spawnseasons[i_season]], bw=bandwidth)
+  plot(thedensity, xlim=range(telemdata1$upriver), ylim=c(0, maxy), main=spawnseasons[i_season])
+  thedensity <- density(telem_spawn$upriver[telem_spawn$spawn==preseasons[i_season]], bw=bandwidth)
+  lines(thedensity, lty=2)
+}
+
+## any utility from KS tests?
+for(i_season in seq_along(spawnseasons)) {
+  print(ks.test(telem_spawn$upriver[telem_spawn$spawn==spawnseasons[i_season]],
+          telem_spawn$upriver[telem_spawn$spawn==preseasons[i_season]]))
+}
+
+
+## Data checks.  I would like to see how much time elapsed between prespawn and spawn
+## for each season, and how consistent this is among years.  Also, when (calendar-wise)
+## was identified as prespawn for each year.
+
+# boxplot of time difference for each spawning season
+par(mfrow=c(1,2))
+with(telem_spawn, boxplot(spawn_diff~spawn, ylab="Difference (days) between prespawn and spawn"))
+
+# median difference
+with(subset(telem_spawn, !is.na(spawn_diff)), tapply(spawn_diff, spawn, median, na.rm=T))
+
+# sd of difference
+with(subset(telem_spawn, !is.na(spawn_diff)), tapply(spawn_diff, spawn, sd, na.rm=T))
+
+
+# boxplot of the dates themselves
+with(telem_spawn, boxplot(date~spawn, ylab="Dates", col=c(2,4)))
+
+# median dates
+with(telem_spawn, as.Date(tapply(date, spawn, median)), origin="1970-01-01")
+
+# sd of dates
+with(telem_spawn, tapply(date, spawn, sd))
+
+## Take-home message: pre-spawn dates were not consistent among years.  
+## 2018-19 median was late September, as opposed to January in other years.
+## Thus migration patterns probably won't be consistent between years 
+
+## Update: after redefining pre-spawn dates in the second two seasons to be more 
+## consistent with the first, the inferences don't really change appreciably.
+
+
 
 ## SHOWING THIS ALL IN ONE PLOT
 ## two versions of a stacked dotplot (flipping X/Y coordinates)
@@ -397,6 +690,7 @@ upm1[telem3d$current_state=="dead"] <- NA   ### TAKING OUT DEAD FISH ###
 daym <- telem3d$date
 parmar <- par("mar")  # storing original margin settings
 par(mar=c(6.1, 4.1, 4.1, 2.1))  # tweaking margin for this plot
+par(mfrow=c(1,1))
 plot(NA, xlim=range(daym, na.rm=T), ylim=range(upm1, na.rm=T),
      ylab="Upriver position (km)", xaxt='n', xlab="")
 for(i in 1:nrow(upm1)) {
@@ -463,12 +757,12 @@ for(i in 1:3) {
              ylab="Section observed", xlab="Flight number", 
              main=paste("Tagging location:", c("Lower","Middle","Upper")[i]))
 }
-par(mfrow=c(3,3))
-for(i in 1:13) {
-  mosaicplot(t(sectiontables_bystock[i,,]), col=T, 
-             ylab="Section observed", xlab="Tagging Location",
-             main=paste("Flight", i))
-}  # I don't think this one is meaningful
+# par(mfrow=c(3,3))
+# for(i in 1:13) {
+#   mosaicplot(t(sectiontables_bystock[i,,]), col=T, 
+#              ylab="Section observed", xlab="Tagging Location",
+#              main=paste("Flight", i))
+# }  # I don't think this one is meaningful
 
 # constructing a simplfied(ish) table for this
 n_arr <- array(dim=dim(sectiontables_bystock))
@@ -649,6 +943,434 @@ par(mar=parmar)
 ### - decide which distance metric(s) to keep - distance per obs, plus either homerange OR cumulative distance
 ### - table mean / se OR proportions - decide which
 ### - anova/chi^2??
+
+
+### bringing back the time series plot (line 412ish), but also showing 
+### by-individual stuff from this section 
+make_a_ts <- function(colvec=rep(1,309), lwdvec=rep(1,309), alpha=c(.5,.3), ...) {
+  par(mar=c(5.1, 6.1, 4.1, 2.1))  # tweaking margin for this plot
+  plot(NA, ylim=c(max(daym, na.rm=T), min(daym, na.rm=T)), xlim=range(upm1, na.rm=T),
+       xlab="Upriver position (km)", yaxt='n', ylab="", ...=...)
+  for(i in 1:nrow(upm1)) {
+    points(upm1[i,], daym[i,], col=adjustcolor(colvec[i], alpha.f=alpha[1]))
+    lines(upm1[i,], daym[i,], col=adjustcolor(colvec[i], alpha.f=alpha[1]), lwd=lwdvec[i])
+    lines(upm1[i,!is.na(upm1[i,])], daym[i,][!is.na(upm1[i,])], lty=3, 
+          col=adjustcolor(colvec[i], alpha.f=alpha[2]), lwd=lwdvec[i])
+  }
+  axis(side=2, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
+  # note: axis ticks are not shown for tagging dates
+  par(mar=parmar)  # resetting margins to default state
+}
+
+par(mfrow=c(1,1))
+# make_a_ts()
+make_a_ts(colvec=1+as.numeric(as.factor(sectionmode)), alpha=c(.8,.4), 
+          main="River section most often occupied")
+make_a_ts(colvec=1+as.numeric(as.factor(telem3d$tagging_location[,1])), alpha=c(.8,.4), 
+          main="Section tagged")
+make_a_ts(colvec=1+as.numeric(as.factor(telem3d$tagging_habitat[,1])), alpha=c(.8,.4), 
+          main="Tagging habitat")
+make_a_ts(colvec=1+as.numeric(as.factor(telem3d$life_history[,1])), alpha=c(.8,.4), 
+          main="Life history")
+make_a_ts(lwdvec=as.numeric(as.factor(lengthcut)),
+          main="Length")
+make_a_ts(lwdvec=as.numeric(cut(dtab$homerange,3)),
+          main="Homerange")
+make_a_ts(lwdvec=as.numeric(cut(dtab$cumuldist,4)),
+          main="Cumulative distance")
+make_a_ts(lwdvec=as.numeric(cut(dtab$dist_per_obs,3)),
+          main="Cumulative distance per survey")
+
+
+### Interactive plot to highlight individual!!  Not for the report, but might
+### be helpful for storytelling
+
+### IMPORTANT!! - If you close the app but it keeps running and you are prompted 
+### to restart R, click No, then click on the console and hit <Esc> 
+
+library(shiny)
+server <- shinyServer(function(input, output) {
+  output$thePlot <- renderPlot(
+    make_a_ts(lwdvec = 1+4*((1:309)==input$indiv), 
+              colvec = 2-((1:309)==input$indiv), 
+              alpha=c(.8,.6), main=telem3d$unique_id[input$indiv,1]))
+  
+})
+ui <- shinyUI(fluidPage(
+  titlePanel("Add Title Here"),
+  sidebarLayout(
+    sidebarPanel(numericInput("indiv","Individual:",min=1,max=309,value=1)),
+    
+    #beginning of main section
+    mainPanel(plotOutput("thePlot", height="800px", width="700px"))
+  )
+))
+shinyApp(ui = ui, server = server)
+
+
+
+### investigating a hierarchical clustering algorithm to group similar fish
+### Are discrete movement/behavior patterns detected?
+hc <- hclust(dist(upm1))  # could take first column out
+plot(hc)
+plot(rev(hc$height))   # plotting the height of each split
+plot(-diff(rev(hc$height)), log="y", type="b", xlim=c(0,50))  # difference in heights (log scale)
+
+grp <- cutree(hc, k=14)
+plot(hc)
+rect.hclust(hc, k=14, border=1:14)
+make_a_ts(colvec = jagshelper::rcolors(100)[grp], lwdvec = 2)
+
+
+### The same thing as an interactive Shiny app, in which the user gets to choose
+### the number of clusters.  Panels indicating "- NEW" in the title are the groups
+### that were split at this level.  Interpreting these results, one can ask
+### "is this a behaviorally meaningful split?"  I think the split at k=14 is 
+### actually quite meaningful, fwiw.
+
+### I would be curious if the groups identified have any relationship with 
+### known variables (life history, size, etc)
+
+library(shiny)
+server <- shinyServer(function(input, output) {
+  output$thePlot <- renderPlot(
+    {
+      grp <- cutree(hc, k=input$nclust)
+      thetab <- table(cutree(hc, k=input$nclust-1), grp)
+      newvec <- rep("", ncol(thetab))
+      for(j in 1:nrow(thetab)) {
+        if(sum(thetab[j,] > 0) > 1) newvec[thetab[j,] > 0] <- "- NEW"
+      }
+      par(mfrow=c(4,5))
+      plot(hc)
+      rect.hclust(hc, k=input$nclust, border=rainbow(input$nclust))
+      for(i in 1:input$nclust) {
+        make_a_ts(lwdvec = 1+2*(grp==i), 
+                  colvec = 2-(grp==i), 
+                  alpha=c(.8,.6),
+                  main=paste("n =", sum(grp==i), newvec[i]))
+        }
+    })
+  
+})
+ui <- shinyUI(fluidPage(
+  titlePanel("Add Title Here"),
+  sidebarLayout(
+    sidebarPanel(sliderInput("nclust","Number of Clusters:",min=2,max=19,value=14)),
+    
+    #beginning of main section
+    mainPanel(plotOutput("thePlot", height="1000px", width="1200px"))
+  )
+))
+shinyApp(ui = ui, server = server)
+
+
+# plot by itself for the k=14 clustering result
+par(mfrow=c(4,4))
+plot(hc)
+rect.hclust(hc, k=14, border=rainbow(14))
+for(i in 1:14) {
+  make_a_ts(lwdvec = 1+2*(grp==i), 
+            colvec = 2-(grp==i), 
+            alpha=c(.8,.6),
+            main=paste("n =", sum(grp==i)))
+}
+
+par(mfrow=c(1,1))  # making a plot of group 2 by itself to address a discussion question
+for(i in 2) {
+  make_a_ts(lwdvec = 1+2*(grp==i), 
+            colvec = 2-(grp==i), 
+            alpha=c(.8,.6),
+            main=paste("n =", sum(grp==i)))
+}
+
+
+
+### Trying a suite of multiple regression models, with each distance metric as
+### the response variable and logical combinations of by-individual variables
+### as predictors.
+### From the exploratory plots, it's apparent that there are stories to tell -
+### my hope is that MLR might isolate what the cleanest stories are.
+
+# First pulling out potential explanatory variables and grouping them by set
+# note: "lake" was recoded as "tributary" since sample sizes were small for lake
+
+tagging_loc <- telem3d$tagging_location[,1]
+# avgupriver
+# uprivercut
+# sectionmode
+
+tagging_hab <- telem3d$tagging_habitat[,1]
+tagging_hab[tagging_hab=="lake"] <- "tributary"
+
+life_hist <- telem3d$life_history[,1]
+life_hist[life_hist=="lake"] <- "tributary"
+
+total_length <- telem3d$total_length[,1]
+# lengthcut
+
+
+### Statistically, this might not be the best practice; programmatically, it's
+### so cool I can hardly stand it.
+### The algorithm below fits multiple regression models for all possible 
+### combinations of each set of explanatory variables:
+### - v1 are possible variables for general location
+### - v2 are possible variables for life history
+### - v3 are possible variables for length.
+
+v1 <- c("tagging_loc","avgupriver","uprivercut","sectionmode")
+v2 <- c("tagging_hab","life_hist")
+v3 <- c("total_length","lengthcut")
+o1 <- c("+","*")
+
+# # including all possible interactions
+# alltheformulas <- c(expand.grid(v1,o1,v2,o1,v3) %>%
+#   apply(1, paste, collapse=" "),
+#   expand.grid(v1,o1,v2) %>%
+#     apply(1, paste, collapse=" "),
+# expand.grid(v1,o1,v3) %>%
+#   apply(1, paste, collapse=" "),
+# expand.grid(v2,o1,v3) %>%
+#   apply(1, paste, collapse=" "),
+# v1, v2, v3) %>%
+#   paste("y ~", .) 
+
+# # only including main effects
+# alltheformulas <- c(expand.grid(v1,v2,v3) %>%
+#   apply(1, paste, collapse=" + "),
+#   expand.grid(v1,v2) %>%
+#     apply(1, paste, collapse=" + "), 
+#   expand.grid(v1,v3) %>%
+#     apply(1, paste, collapse=" + "), 
+#   expand.grid(v2,v3) %>%
+#     apply(1, paste, collapse=" + "),
+#   v1, v2, v3) %>%
+#   paste("y ~", .) 
+
+### let's see if I can generalize this - SUCCESS!!
+### Input will be a list of variable names
+### NOTE: I would like to develop this further, but should probably move forward
+### with the project!
+makealltheformulas <- function(varlist, interactions=F) {
+  whichvars <- list()
+  for(ii in seq_along(varlist)) whichvars[[ii]] <- combn(seq_along(varlist), ii)
+  
+  # incremental element 1
+  thing1 <- sapply(whichvars, function(y) apply(y, 2, function(x) expand.grid(varlist[x])))  # trying this
+  # str(thing1)
+  
+  if(interactions) o1 <- c("*", "+")
+  if(!interactions) o1 <- "+"
+  
+  thing2 <- list()  # thing2 will match list structure of thing1
+  for(i1 in seq_along(thing1)) {
+    thing2[[i1]] <- list()
+    for(i2 in seq_along(thing1[[i1]])) {
+      # thing2[[i1]][[i2]] <- thing1[[i1]][[i2]] # this is just to make sure indexing worked
+      thedf <- thing1[[i1]][[i2]]
+      if(ncol(thedf)>1) {
+        omat <- expand.grid(replicate(ncol(thedf)-1, o1, simplify=F))  # matrix defined by operators (* or +)
+        linker <- expand.grid(1:nrow(thedf), 1:nrow(omat))             # links variables and operators
+        splicer <- matrix(nrow=nrow(linker), ncol=ncol(thedf)+ncol(omat))  # splices variables and operators
+        for(i in 1:ncol(thedf)) {
+          splicer[,2*i-1] <- as.character(thedf[,i][linker[,1]])
+        }
+        for(i in 1:ncol(omat)) {
+          splicer[,2*i] <- as.character(omat[,i][linker[,2]])
+        }
+        thing2[[i1]][[i2]] <- paste("y ~", apply(splicer, 1, paste, collapse=" "))
+      } else {
+        thing2[[i1]][[i2]] <- paste("y ~", as.character(thedf[,1]))
+      }
+    }
+  }
+  thing3 <- unlist(thing2)
+  return(thing3)
+}
+alltheformulas <- makealltheformulas(varlist=list(v1, v2, v3), interactions=T)
+
+
+
+### fitting all candidate response variables to the suite of all predictors...
+
+y <- log(dtab$homerange+1)
+
+allthelms <- sapply(alltheformulas, function(x) lm(as.formula(x)))
+alltheAICs <- sapply(allthelms, AIC)
+par(mfrow=c(2,3))
+plot(alltheAICs)
+abline(h=min(alltheAICs)+2, lty=2)
+alltheAICs[alltheAICs < min(alltheAICs)+2]
+lm1 <- allthelms[[which.min(alltheAICs)]]
+AIC(lm1)
+plot(lm1)
+anova(lm1)
+summary(lm1)
+
+
+y <- log(dtab$cumuldist+1)
+
+allthelms <- sapply(alltheformulas, function(x) lm(as.formula(x)))
+alltheAICs <- sapply(allthelms, AIC)
+par(mfrow=c(2,3))
+plot(alltheAICs)
+abline(h=min(alltheAICs)+2, lty=2)
+alltheAICs[alltheAICs < min(alltheAICs)+2]
+lm1 <- allthelms[[which.min(alltheAICs)]]
+AIC(lm1)
+plot(lm1)
+anova(lm1)
+summary(lm1)
+
+
+y <- log(dtab$dist_per_obs+1)  ### this is by far the cleanest in terms of diagnostics
+
+allthelms <- sapply(alltheformulas, function(x) lm(as.formula(x)))
+alltheAICs <- sapply(allthelms, AIC)
+par(mfrow=c(2,3))
+plot(alltheAICs)
+abline(h=min(alltheAICs)+2, lty=2)
+data.frame(alltheAICs, 1:length(alltheAICs))[alltheAICs < min(alltheAICs)+2,]
+# lm1 <- allthelms[[which.min(alltheAICs)]]
+lm1 <- allthelms[[96]]
+AIC(lm1)
+plot(lm1)
+anova(lm1)
+summary(lm1)
+
+
+### Fitting an equivalent Bayesian model, for the purpose of visualizing effect sizes.
+### This model is parameterized differently from the model above in two ways:
+### - Instead of considering main effects & interaction terms for the one-way
+###   interaction between life_hist and sectionmode, a single predictor variable
+###   was constructed by concatenating the two.
+### - Perhaps more importantly, this model is parameterized in terms of a global
+###   mean or baseline, plus effects for [length] and [life_hist & sectionmode].
+###   The global mean should not be interpreted as the mean across all fish, but
+###   rather across all category means.
+### Note: the previous version of this model included an interaction between 
+### avg upriver position and life history, and model code should still be updated.
+
+# specify model, which is written to a temporary file
+dist_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {
+    y[i] ~ dnorm(mu[i], tau)
+    mu[i] <- b0 + b_length[lengthcut[i]] + b_uplife[upriver_lifehist[i]]
+  }
+
+  for(j_length in 1:(nlength-1)) {
+    b_length[j_length] ~ dnorm(0, 0.001)
+  }
+  b_length[nlength] <- -sum(b_length[1:(nlength-1)])
+
+  for(j_uplife in 1:(nuplife-1)) {
+    b_uplife[j_uplife] ~ dnorm(0, 0.001)
+  }
+  b_uplife[nuplife] <- -sum(b_uplife[1:(nuplife-1)])
+
+  tau <- pow(sig, -2)
+  sig ~ dunif(0, 10)
+  b0 ~ dnorm(0, 0.001)
+}', file=dist_jags)
+
+
+# bundle data to pass into JAGS
+dist_data <- list(lengthcut=as.numeric(as.factor(lengthcut[!is.na(y) & !is.na(lengthcut)])),
+                  # upriver_lifehist=as.numeric(as.factor(paste(uprivercut, life_hist)[!is.na(y) & !is.na(lengthcut)])),
+                  # upriver_lifehist=as.numeric(as.factor(paste(life_hist, uprivercut)[!is.na(y) & !is.na(lengthcut)])),
+                  upriver_lifehist=as.numeric(as.factor(paste(life_hist, sectionmode)[!is.na(y) & !is.na(lengthcut)])),
+                  y=y[!is.na(y) & !is.na(lengthcut)])
+# dist_data$lengthcut <- as.numeric(as.factor(dist_data$lengthcut_raw))
+dist_data$nlength <- length(unique(dist_data$lengthcut))
+# dist_data$upriver_lifehist <- as.numeric(as.factor(dist_data$upriver_lifehist_raw))
+dist_data$nuplife <- length(unique(dist_data$upriver_lifehist))
+dist_data$n <- length(dist_data$y)
+
+# JAGS controls
+niter <- 10000
+# ncores <- 3
+ncores <- min(10, parallel::detectCores()-1)
+
+{  ## running JAGS
+  tstart <- Sys.time()
+  print(tstart)
+  dist_jags_out <- jagsUI::jags(model.file=dist_jags, data=dist_data,
+                                parameters.to.save=c("b0","b_length","b_uplife","sig"),
+                                n.chains=ncores, parallel=T, n.iter=niter,
+                                n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+## a few JAGS diagnostic plots
+# nbyname(dist_jags_out)
+# plotRhats(dist_jags_out)
+# traceworstRhat(dist_jags_out)
+
+## pulling out data.frames associated with posteriors of length & life history/position effects
+b_length <- jags_df(dist_jags_out, p="b_length")
+b_uplife <- jags_df(dist_jags_out, p="b_uplife")
+
+
+## Plotting effect sizes!!
+
+par(mar=c(10.1, 4.1, 2.1, 2.1))  ## tweaking margins so plots below will work
+
+par(mfrow=c(2,2))
+caterpillar(b_length, xax=rep("",4), main="Effect sizes for length category")
+axis(1, 1:4, label=levels(as.factor(lengthcut)), las=2)
+abline(h=0, lty=3)
+caterpillar(b_uplife, xax=rep("",ncol(b_uplife)), main="Effect sizes for section mode & life history")
+# axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,uprivercut))), las=2)
+axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,sectionmode))), las=2)
+abline(h=0, lty=3)
+caterpillar(exp(b_length), xax=rep("",4), 
+            main="Exponentiated effect sizes for length category",
+            ylab="Multiplicative change from baseline")
+axis(1, 1:4, label=levels(as.factor(lengthcut)), las=2)
+abline(h=1, lty=3)
+caterpillar(exp(b_uplife), xax=rep("",ncol(b_uplife)), 
+            main="Exponentiated effect sizes for section mode & life history",
+            ylab="Multiplicative change from baseline")
+# axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,uprivercut))), las=2)
+axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,sectionmode))), las=2)
+abline(h=1, lty=3)
+
+## Looking at how much of the effect size posteriors are above/below zero
+## This can be taken as evidence of which effects are different from zero 
+colMeans(b_length>0)
+colMeans(b_uplife>0)
+
+## can interpret these as p-values(ish)
+sapply(colMeans(b_length>0), function(x) 2*min(x,1-x))
+sapply(colMeans(b_uplife>0), function(x) 2*min(x,1-x))
+
+
+## Boxplots of raw data, broken out by factors identified by the model
+
+# boxplot(y ~ lengthcut, main="log(dist per obs) by length category", 
+#         las=2, xlab="")
+# boxplot(y ~ paste(life_hist,sectionmode), main="log(dist per obs) by section mode & life history", 
+#         las=2, xlab="")
+boxplot(dtab$dist_per_obs+1 ~ lengthcut, main="Dist per obs, by length category", 
+        las=2, xlab="", log="y")
+boxplot(dtab$dist_per_obs+1 ~ paste(life_hist, sectionmode), main="Dist per obs, by section mode & life history", 
+        las=2, xlab="", log="y")
+boxplot(dtab$dist_per_obs ~ lengthcut, main="Dist per obs, by length category", 
+        las=2, xlab="")
+boxplot(dtab$dist_per_obs ~ paste(life_hist, sectionmode), main="Dist per obs, by section mode & life history", 
+        las=2, xlab="")
+
+par(mar=parmar)  # re-setting margins
+
+
+### making time-series plots to show up/downriver movement
+### broken out by life history / river section
+par(mfrow=c(2,3))
+for(i in 1:6) {
+make_a_ts(lwdvec=1+2*(as.numeric(as.factor(paste(life_hist, sectionmode)))==i),
+          colvec=2-1*(as.numeric(as.factor(paste(life_hist, sectionmode)))==i),
+          main=names(table(paste(life_hist, sectionmode)))[i])
+}
 
 
 
