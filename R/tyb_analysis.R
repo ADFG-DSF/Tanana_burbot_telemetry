@@ -1879,7 +1879,10 @@ cat('model {
     for(j in firstpresent[i]:firstdead[i]) {          # for each survey
       # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
       survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
-      logit(p[i,j]) <- b0[j-1] + b_section[sectionmode[i]] + b_life[life_hist[i]] + b_length[lengthcut[i]] #
+      logit(p[i,j]) <- b0[j-1] 
+      # + b_section[sectionmode[i]] 
+      # + b_life[life_hist[i]] 
+      # + b_length[lengthcut[i]] 
     }
   }
   
@@ -1973,9 +1976,9 @@ surv_jags_out$DIC         # 1623.812
 survsection_jags_out$DIC  # 1263.714
 surv_vbls_jags_out$DIC    # 1523.894, 1535.742 without length, 1563.367 with life x section interaction
 # try running THIS model all the ways, REMOVING NA VALUES IN LENGTH:
-# - taking out all explanatory variables              DIC = xxxxxxxx at 500k reps
-# - life hist + section as main effects               DIC = xxxxxxxx at 500k reps
-# - life hist + section as main effects, plus length  DIC = xxxxxxxx at 500k reps
+# - taking out all explanatory variables              DIC = 1589.783 at 500k reps
+# - life hist + section as main effects               DIC = 1524.214 at 500k reps
+# - life hist + section as main effects, plus length  DIC = 1547.579 at 500k reps
 # - life hist x section as interaction                DIC = 1539.344 at 500k reps
 # - life hist x section as interaction, plus length   DIC = 1563.367 at 500k reps
 
