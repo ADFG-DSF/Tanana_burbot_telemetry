@@ -413,7 +413,7 @@ telem_spawn <- subset(telem_alive, !is.na(spawn))
 network_dens_spawn <- with(telem_spawn, makeriverdensity(seg=seg, vert=vert, survey=spawn,
                                                         rivers=tyb_trim, bw=50*1000,
                                                         kernel="rect"))
-par(mfrow=c(2,2))
+par(mfrow=c(3,2))
 plot(network_dens_spawn, scalebyN = F, maxlwd = 15)
 
 # hacking the structure of a riverdensity object to create an object of contrasts
@@ -939,10 +939,7 @@ for(imetric in c(6,3:5)) { # this was just a logical order of columns
 }
 par(mar=parmar)
 
-### to do:
-### - decide which distance metric(s) to keep - distance per obs, plus either homerange OR cumulative distance
-### - table mean / se OR proportions - decide which
-### - anova/chi^2??
+
 
 
 ### bringing back the time series plot (line 412ish), but also showing 
@@ -980,6 +977,7 @@ make_a_ts(lwdvec=as.numeric(cut(dtab$cumuldist,4)),
           main="Cumulative distance")
 make_a_ts(lwdvec=as.numeric(cut(dtab$dist_per_obs,3)),
           main="Cumulative distance per survey")
+
 
 
 ### Interactive plot to highlight individual!!  Not for the report, but might
@@ -1851,3 +1849,148 @@ par(mar=parmar)
 ## comparing DIC scores - it seems separating by section is better.  Weird!!
 survsection_jags_out$DIC  # 1263.714
 surv_jags_out$DIC         # 1623.812
+
+
+
+## Bayesian survival model - next version
+## Investigating whether individual-level variables (size, life history, section)
+## affect survival probability, globally (not looking at interactions!!)
+
+## this is just a list of variables
+# tagging_loc <- telem3d$tagging_location[,1]
+# # avgupriver
+# # uprivercut
+# # sectionmode
+# 
+# tagging_hab <- telem3d$tagging_habitat[,1]
+# tagging_hab[tagging_hab=="lake"] <- "tributary"
+# 
+# life_hist <- telem3d$life_history[,1]
+# life_hist[life_hist=="lake"] <- "tributary"
+# 
+# total_length <- telem3d$total_length[,1]
+# # lengthcut
+
+# skeleton("surv")
+# specify model
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] + b_section[sectionmode[i]] + b_life[life_hist[i]] + b_length[lengthcut[i]] #
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  for(i_section in 1:(n_section-1)) {
+    b_section[i_section] ~ dnorm(0, 0.1)
+  }
+  b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  for(i_life in 1:(n_life-1)) {
+    b_life[i_life] ~ dnorm(0, 0.1)
+  }
+  b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  for(i_length in 1:(n_length-1)) {
+    b_length[i_length] ~ dnorm(0, 0.1)
+  }
+  b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+}', file=surv_vbls_jags)
+
+# bundle data to pass into JAGS
+surv_vbls_data <- list(survtable=survtable,  
+                  firstdead=firstdead,
+                  firstpresent=firstpresent,
+                  n=nrow(survtable),
+                  np=ncol(survtable)-1,
+                  sectionmode=as.numeric(as.factor(sectionmode)),
+                  n_section=length(unique(sectionmode)),
+                  # sectionmode=as.numeric(as.factor(paste(life_hist, sectionmode))),
+                  # n_section=length(unique(paste(life_hist, sectionmode))),
+                  life_hist=as.numeric(as.factor(life_hist)),
+                  n_life=length(unique(life_hist)),
+                  lengthcut=as.numeric(as.factor(lengthcut)),
+                  n_length=length(levels(lengthcut)))
+surv_vbls_data$survtable <- surv_vbls_data$survtable[!is.na(lengthcut),]
+surv_vbls_data$firstdead <- surv_vbls_data$firstdead[!is.na(lengthcut)]
+surv_vbls_data$firstpresent <- surv_vbls_data$firstpresent[!is.na(lengthcut)]
+surv_vbls_data$sectionmode <- surv_vbls_data$sectionmode[!is.na(lengthcut)]
+surv_vbls_data$life_hist <- surv_vbls_data$life_hist[!is.na(lengthcut)]
+surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
+surv_vbls_data$n <- sum(!is.na(lengthcut))
+
+# JAGS controls
+niter <- 500*1000  # 100k takes 4.3 min
+ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                parameters.to.save=c("p","b0","b_section","b_life","b_length"), #"survtable",
+                                n.chains=ncores, parallel=T, n.iter=niter,
+                                n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+
+# checking output & assessing convergence 
+nbyname(surv_vbls_jags_out)     # how many parameters are returned
+par(mfrow=c(2,2))
+plotRhats(surv_vbls_jags_out)   # plotting Rhat for each parameter: near 1 is good
+traceworstRhat(surv_vbls_jags_out)  # trace plots for worst parameters
+
+par(mfrow=c(4,4))
+tracedens_jags(surv_vbls_jags_out, p="b0")
+
+par(mfrow=c(2,2))
+caterpillar(surv_vbls_jags_out, p="b0")
+abline(h=0, lty=3)
+caterpillar(surv_vbls_jags_out, p="b_section")
+abline(h=0, lty=3)
+caterpillar(surv_vbls_jags_out, p="b_life")
+abline(h=0, lty=3)
+caterpillar(surv_vbls_jags_out, p="b_length")
+abline(h=0, lty=3)
+
+par(mfrow=c(2,2))
+caterpillar(expit(surv_vbls_jags_out$sims.list$b0))
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_section))
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_life))
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_length))
+abline(h=0:1, lty=3)
+
+## comparing DIC scores - it seems separating by section is better.  Weird!!
+surv_jags_out$DIC         # 1623.812
+survsection_jags_out$DIC  # 1263.714
+surv_vbls_jags_out$DIC    # 1523.894, 1535.742 without length, 1563.367 with life x section interaction
+# try running THIS model all the ways, REMOVING NA VALUES IN LENGTH:
+# - taking out all explanatory variables              DIC = xxxxxxxx at 500k reps
+# - life hist + section as main effects               DIC = xxxxxxxx at 500k reps
+# - life hist + section as main effects, plus length  DIC = xxxxxxxx at 500k reps
+# - life hist x section as interaction                DIC = 1539.344 at 500k reps
+# - life hist x section as interaction, plus length   DIC = 1563.367 at 500k reps
+
+
+
+# plotting survival & survival probability
+par(mfrow=c(1,1))
+par(mar=c(6.1, 4.1, 4.1, 2.1))
+plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+     xlab="", ylab="Survival Probability", xaxt="n")
+for(i in 1:nrow(survtable)) {
+  jmeans <- surv_vbls_jags_out$mean$survtable[i,] + runif(ncol(surv_vbls_jags_out$mean$survtable), -0.01, 0.01)
+  jdates <- 1:ncol(surv_vbls_jags_out$mean$survtable) + runif(ncol(surv_vbls_jags_out$mean$survtable), -0.05, 0.05)
+  lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+  points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+}
+axis(side=1, at=1:length(plotdates), plotdates, las=2)
+par(mar=parmar)
