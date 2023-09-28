@@ -2027,7 +2027,7 @@ surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
 surv_vbls_data$n <- sum(!is.na(lengthcut))
 
 # JAGS controls
-niter <- 1000*1000  # 100k takes 4.3 min  - now takes 1 minute and change
+niter <- 5000*1000  # 100k takes 4.3 min  - now takes 1 minute and change
 ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
 
 jagsouts <- list()
@@ -2441,15 +2441,37 @@ cat('model {
 }
 jagsouts[[7]] <- surv_vbls_jags_out
 
+# # saving in a different location to avoid Github directory clutter
+# # maybe not the greatest move, but I don't intend to archive this
+# save(jagsouts, file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/jagsouts5000k.Rdata")
+# load(file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/jagsouts5000k.Rdata")
+
+
+
+## Model 1: baseline                                        + 0  stable
+## Model 2: baseline + section + life                       + 3
+## Model 3: baseline + section + life + length              + 6
+## Model 4: baseline + section x life                       + 5  stable
+## Model 5: baseline + section x life + length              + 8
+## Model 6: baseline + section (2 levels) + life            + 2
+## Model 7: baseline + simplified section x life (3 levels) + 2
+
+# note: on my office machine, 7 models at 5000k ran from 4:30pm to 4:30am
 
 
 ## comparing DIC scores across models!!
 sapply(jagsouts, function(x) x$DIC)
-# [1] 1592.138 1518.726 1521.173 1544.973 1566.863
+# [1] 1592.138 1518.726 1521.173 1544.973 1566.863   at 1000k
 # [1] 1592.145 1540.600 1540.535 1543.989 1556.535 1531.136 1536.323 ??????
+# [1] 1590.691 1517.897 1553.076 1543.333 1575.620 1520.864 1545.220   at 5000k 
+
+# observation: with traceworstRhat(jagsouts[[ii]]), deviance is multimodal with 
+# models exhibiting inconsistent DIC (3 & 5 are worst)
+
 
 sapply(jagsouts, function(x) max(unlist(x$Rhat), na.rm=T))
 # [1] 1.001506 1.002097 1.002676 1.001322 1.001226 1.003476 1.002978
+# [1] 1.001305 1.002591 1.002157 1.001268 1.001304 1.001102 1.001338  at 5000k
 
 ## comparing parameter inferences
 comparecat(jagsouts, p="b0")
@@ -2458,6 +2480,7 @@ comparecat(jagsouts, p="b_section")
 comparecat(jagsouts, p="b_simpsection")
 comparecat(jagsouts, p="b_life")
 comparecat(jagsouts, p="b_lifesection")
+comparecat(jagsouts, p="b_simpsection")
 comparecat(jagsouts, p="b_simplifesection")
 
 
@@ -2476,13 +2499,15 @@ comparecat(jagsouts, p="b_simplifesection")
 
 
 ## ok, let's build some bones
-surv_vbls_jags_out <- jagsouts[[2]]
+surv_vbls_jags_out <- jagsouts[[4]]
 
 caterpillar(surv_vbls_jags_out, p="b0", xax=rep("",length(plotdates)-1))
-axis(side=1, at=0:surv_data$np, plotdates, las=2)
-caterpillar(surv_vbls_jags_out, p="b_section", xax=levels(as.factor(sectionmode)))
-abline(h=0:1, lty=3)
-caterpillar(surv_vbls_jags_out, p="b_life", xax=levels(as.factor(life_hist)))
+# axis(side=1, at=0:surv_data$np, plotdates, las=2)
+# caterpillar(surv_vbls_jags_out, p="b_section", xax=levels(as.factor(sectionmode)))
+# abline(h=0:1, lty=3)
+# caterpillar(surv_vbls_jags_out, p="b_life", xax=levels(as.factor(life_hist)))
+# abline(h=0:1, lty=3)
+caterpillar(surv_vbls_jags_out, p="b_lifesection", xax=levels(as.factor(paste(life_hist, sectionmode))))
 abline(h=0:1, lty=3)
 
 caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np), col=2)  # 50 & 95% credible intervals for each p!
@@ -2490,9 +2515,11 @@ caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np), col=2)  # 50 & 95% 
 # plotdates <- c("Capture 1", mnDates1[2:3],"Capture 2", mnDates1[4:5],"Capture 3",mnDates1[6:length(mnDates)])
 axis(side=1, at=0:surv_data$np, plotdates, las=2)
 
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_section), xax=levels(as.factor(sectionmode)))
-abline(h=0:1, lty=3)
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_life), xax=levels(as.factor(life_hist)))
+# caterpillar(exp(surv_vbls_jags_out$sims.list$b_section), xax=levels(as.factor(sectionmode)))
+# abline(h=0:1, lty=3)
+# caterpillar(exp(surv_vbls_jags_out$sims.list$b_life), xax=levels(as.factor(life_hist)))
+# abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_lifesection), xax=levels(as.factor(paste(life_hist, sectionmode))))
 abline(h=0:1, lty=3)
 
 # caterpillar(expit(surv_vbls_jags_out$sims.list$b0), xax=rep("",length(plotdates)-1))
