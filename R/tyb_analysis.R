@@ -1748,107 +1748,110 @@ legend("bottomright", legend=c("p raw", "p adjusted"), pch=c(1,16))
 
 
 
-#### AT THIS POINT I TRIED EXPANDING THE MODEL TO ESTIMATE SURVIVAL/MORTALITY
-#### SEPARATELY BY SECTION.  THE MODEL SEEMED TO WORK, BUT I WASN'T SURE IF
-#### THE RESULTS WERE MEANINGFUL OR INTERPRETABLE.
+# #### AT THIS POINT I TRIED EXPANDING THE MODEL TO ESTIMATE SURVIVAL/MORTALITY
+# #### SEPARATELY BY SECTION.  THE MODEL SEEMED TO WORK, BUT I WASN'T SURE IF
+# #### THE RESULTS WERE MEANINGFUL OR INTERPRETABLE.
+# 
+# ### does survival/mortality differ by section?? harvest certainly does
+# 
+# # build section matrix from telem3d$section to correspond with survtable
+# # - insert columns for capture events (take entries from original column 1)
+# # - for NA, impute highest-frequency section for each row (individual)
+# # - combine Lower and Yukon
+# 
+# # recoding
+# sectiontable <- telem3d$section
+# sectiontable[sectiontable=="Lower"] <- 1
+# sectiontable[sectiontable=="Yukon"] <- 1
+# sectiontable[sectiontable=="Middle"] <- 2
+# sectiontable[sectiontable=="Upper"] <- 3
+# sectiontable <- matrix(as.numeric(sectiontable), nrow=nrow(sectiontable), ncol=ncol(sectiontable))
+# 
+# # adding columns for capture events
+# sectiontagged <- sectiontable[,1]
+# sectiontable[,1] <- NA
+# sectiontable <- cbind(sectiontable[,1:3], NA, sectiontable[,4:5], NA, sectiontable[,6:ncol(sectiontable)])
+# sectiontable[tagdatecut==1, 1] <- sectiontagged[tagdatecut==1]
+# sectiontable[tagdatecut==2, 4] <- sectiontagged[tagdatecut==2]
+# sectiontable[tagdatecut==3, 7] <- sectiontagged[tagdatecut==3]
+# 
+# # imputing missing values
+# themode <- function(x) as.numeric(names(sort(table(x), decreasing=T))[1])
+# for(i in 1:nrow(sectiontable)) {
+#   sectiontable[i, is.na(sectiontable[i,])] <- themode(sectiontable[i,])
+# }
+# 
+# ## the next Bayesian model!!
+# survsection_jags <- tempfile()
+# cat('model {
+#   for(i in 1:n) {  
+#     for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+#       survtable[i,j] ~ dbin(p[sectiontable[i,j], j-1], survtable[i,j-1])   # for each event present   
+#     }
+#   }
+#   for(i in 1:3) {
+#     for(j in 1:np) {
+#       p[i,j] ~ dbeta(.5, .5)
+#     }
+#   }
+# }', file=survsection_jags)
+# 
+# # bundle data to pass into JAGS
+# survsection_data <- list(survtable=survtable, 
+#                          sectiontable=sectiontable,
+#                   firstdead=firstdead,
+#                   firstpresent=firstpresent,
+#                   n=nrow(survtable),
+#                   np=ncol(survtable)-1)
+# 
+# # JAGS controls
+# niter <- 100000
+# ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+# 
+# {
+#   tstart <- Sys.time()
+#   print(tstart)
+#   survsection_jags_out <- jagsUI::jags(model.file=survsection_jags, data=survsection_data,
+#                                 parameters.to.save=c("p","survtable"),
+#                                 n.chains=ncores, parallel=T, n.iter=niter,
+#                                 n.burnin=niter/2, n.thin=niter/2000)
+#   print(Sys.time() - tstart)
+# }
+# 
+# # checking output & assessing convergence (all looks good)
+# nbyname(survsection_jags_out)
+# par(mfrow=c(2,2))
+# plotRhats(survsection_jags_out)
+# traceworstRhat(survsection_jags_out)
+# 
+# caterpillar(survsection_jags_out, p="p", row=1)
+# caterpillar(survsection_jags_out, p="p", row=2)
+# caterpillar(survsection_jags_out, p="p", row=3)
+# 
+# comparecat(list(as.data.frame(survsection_jags_out$sims.list$p[,1,]),
+#                 as.data.frame(survsection_jags_out$sims.list$p[,2,]),
+#                 as.data.frame(survsection_jags_out$sims.list$p[,3,])))
+# 
+# # plotting survival & survival probability
+# par(mfrow=c(1,1))
+# par(mar=c(6.1, 4.1, 4.1, 2.1))
+# plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+#      xlab="", ylab="Survival Probability", xaxt="n")
+# for(i in 1:nrow(survtable)) {
+#   jmeans <- survsection_jags_out$mean$survtable[i,] + runif(ncol(survsection_jags_out$mean$survtable), -0.01, 0.01)
+#   jdates <- 1:ncol(survsection_jags_out$mean$survtable) + runif(ncol(survsection_jags_out$mean$survtable), -0.05, 0.05)
+#   lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+#   points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+# }
+# axis(side=1, at=1:length(plotdates), plotdates, las=2)
+# par(mar=parmar)
+# 
+# ## comparing DIC scores - it seems separating by section is better.  Weird!!
+# survsection_jags_out$DIC  # 1263.714
+# surv_jags_out$DIC         # 1623.812
 
-### does survival/mortality differ by section?? harvest certainly does
 
-# build section matrix from telem3d$section to correspond with survtable
-# - insert columns for capture events (take entries from original column 1)
-# - for NA, impute highest-frequency section for each row (individual)
-# - combine Lower and Yukon
 
-# recoding
-sectiontable <- telem3d$section
-sectiontable[sectiontable=="Lower"] <- 1
-sectiontable[sectiontable=="Yukon"] <- 1
-sectiontable[sectiontable=="Middle"] <- 2
-sectiontable[sectiontable=="Upper"] <- 3
-sectiontable <- matrix(as.numeric(sectiontable), nrow=nrow(sectiontable), ncol=ncol(sectiontable))
-
-# adding columns for capture events
-sectiontagged <- sectiontable[,1]
-sectiontable[,1] <- NA
-sectiontable <- cbind(sectiontable[,1:3], NA, sectiontable[,4:5], NA, sectiontable[,6:ncol(sectiontable)])
-sectiontable[tagdatecut==1, 1] <- sectiontagged[tagdatecut==1]
-sectiontable[tagdatecut==2, 4] <- sectiontagged[tagdatecut==2]
-sectiontable[tagdatecut==3, 7] <- sectiontagged[tagdatecut==3]
-
-# imputing missing values
-themode <- function(x) as.numeric(names(sort(table(x), decreasing=T))[1])
-for(i in 1:nrow(sectiontable)) {
-  sectiontable[i, is.na(sectiontable[i,])] <- themode(sectiontable[i,])
-}
-
-## the next Bayesian model!!
-survsection_jags <- tempfile()
-cat('model {
-  for(i in 1:n) {  
-    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
-      survtable[i,j] ~ dbin(p[sectiontable[i,j], j-1], survtable[i,j-1])   # for each event present   
-    }
-  }
-  for(i in 1:3) {
-    for(j in 1:np) {
-      p[i,j] ~ dbeta(.5, .5)
-    }
-  }
-}', file=survsection_jags)
-
-# bundle data to pass into JAGS
-survsection_data <- list(survtable=survtable, 
-                         sectiontable=sectiontable,
-                  firstdead=firstdead,
-                  firstpresent=firstpresent,
-                  n=nrow(survtable),
-                  np=ncol(survtable)-1)
-
-# JAGS controls
-niter <- 100000
-ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
-
-{
-  tstart <- Sys.time()
-  print(tstart)
-  survsection_jags_out <- jagsUI::jags(model.file=survsection_jags, data=survsection_data,
-                                parameters.to.save=c("p","survtable"),
-                                n.chains=ncores, parallel=T, n.iter=niter,
-                                n.burnin=niter/2, n.thin=niter/2000)
-  print(Sys.time() - tstart)
-}
-
-# checking output & assessing convergence (all looks good)
-nbyname(survsection_jags_out)
-par(mfrow=c(2,2))
-plotRhats(survsection_jags_out)
-traceworstRhat(survsection_jags_out)
-
-caterpillar(survsection_jags_out, p="p", row=1)
-caterpillar(survsection_jags_out, p="p", row=2)
-caterpillar(survsection_jags_out, p="p", row=3)
-
-comparecat(list(as.data.frame(survsection_jags_out$sims.list$p[,1,]),
-                as.data.frame(survsection_jags_out$sims.list$p[,2,]),
-                as.data.frame(survsection_jags_out$sims.list$p[,3,])))
-
-# plotting survival & survival probability
-par(mfrow=c(1,1))
-par(mar=c(6.1, 4.1, 4.1, 2.1))
-plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
-     xlab="", ylab="Survival Probability", xaxt="n")
-for(i in 1:nrow(survtable)) {
-  jmeans <- survsection_jags_out$mean$survtable[i,] + runif(ncol(survsection_jags_out$mean$survtable), -0.01, 0.01)
-  jdates <- 1:ncol(survsection_jags_out$mean$survtable) + runif(ncol(survsection_jags_out$mean$survtable), -0.05, 0.05)
-  lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
-  points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
-}
-axis(side=1, at=1:length(plotdates), plotdates, las=2)
-par(mar=parmar)
-
-## comparing DIC scores - it seems separating by section is better.  Weird!!
-survsection_jags_out$DIC  # 1263.714
-surv_jags_out$DIC         # 1623.812
 
 
 
@@ -1929,7 +1932,7 @@ surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
 surv_vbls_data$n <- sum(!is.na(lengthcut))
 
 # JAGS controls
-niter <- 500*1000  # 100k takes 4.3 min
+niter <- 100*1000  # 100k takes 4.3 min
 ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
 
 {
@@ -1997,3 +2000,506 @@ for(i in 1:nrow(survtable)) {
 }
 axis(side=1, at=1:length(plotdates), plotdates, las=2)
 par(mar=parmar)
+
+
+### TRYING A MORE STRUCTURED APPROACH TO MODEL SELECTION
+# bundle data to pass into JAGS
+surv_vbls_data <- list(survtable=survtable,  
+                       firstdead=firstdead,
+                       firstpresent=firstpresent,
+                       n=nrow(survtable),
+                       np=ncol(survtable)-1,
+                       sectionmode=as.numeric(as.factor(sectionmode)),
+                       n_section=length(unique(sectionmode)),
+                       lifesection=as.numeric(as.factor(paste(life_hist, sectionmode))),
+                       n_lifesection=length(unique(paste(life_hist, sectionmode))),
+                       life_hist=as.numeric(as.factor(life_hist)),
+                       n_life=length(unique(life_hist)),
+                       lengthcut=as.numeric(as.factor(lengthcut)),
+                       n_length=length(levels(lengthcut)))
+surv_vbls_data$survtable <- surv_vbls_data$survtable[!is.na(lengthcut),]
+surv_vbls_data$firstdead <- surv_vbls_data$firstdead[!is.na(lengthcut)]
+surv_vbls_data$firstpresent <- surv_vbls_data$firstpresent[!is.na(lengthcut)]
+surv_vbls_data$sectionmode <- surv_vbls_data$sectionmode[!is.na(lengthcut)]
+surv_vbls_data$lifesection <- surv_vbls_data$lifesection[!is.na(lengthcut)]
+surv_vbls_data$life_hist <- surv_vbls_data$life_hist[!is.na(lengthcut)]
+surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
+surv_vbls_data$n <- sum(!is.na(lengthcut))
+
+# JAGS controls
+niter <- 1000*1000  # 100k takes 4.3 min  - now takes 1 minute and change
+ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+
+jagsouts <- list()
+
+## Model 1: baseline
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      # + b_section[sectionmode[i]]
+      # + b_life[life_hist[i]] 
+      # + b_lifesection[lifesection[i]] 
+      # + b_length[lengthcut[i]] 
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  # for(i_section in 1:(n_section-1)) {
+  #   b_section[i_section] ~ dnorm(0, 0.1)
+  # }
+  # b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  # for(i_life in 1:(n_life-1)) {
+  #   b_life[i_life] ~ dnorm(0, 0.1)
+  # }
+  # b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  # for(i_lifesection in 1:(n_lifesection-1)) {
+  #   b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  # }
+  # b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  # for(i_length in 1:(n_length-1)) {
+  #   b_length[i_length] ~ dnorm(0, 0.1)
+  # }
+  # b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[1]] <- surv_vbls_jags_out
+
+
+
+## Model 2: baseline + section + life
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      + b_section[sectionmode[i]]
+      + b_life[life_hist[i]]
+      # + b_lifesection[lifesection[i]] 
+      # + b_length[lengthcut[i]] 
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  for(i_section in 1:(n_section-1)) {
+    b_section[i_section] ~ dnorm(0, 0.1)
+  }
+  b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  for(i_life in 1:(n_life-1)) {
+    b_life[i_life] ~ dnorm(0, 0.1)
+  }
+  b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  # for(i_lifesection in 1:(n_lifesection-1)) {
+  #   b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  # }
+  # b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  # for(i_length in 1:(n_length-1)) {
+  #   b_length[i_length] ~ dnorm(0, 0.1)
+  # }
+  # b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[2]] <- surv_vbls_jags_out
+
+
+
+
+
+## Model 3: baseline + section + life + length
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      + b_section[sectionmode[i]]
+      + b_life[life_hist[i]]
+      # + b_lifesection[lifesection[i]] 
+      + b_length[lengthcut[i]]
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  for(i_section in 1:(n_section-1)) {
+    b_section[i_section] ~ dnorm(0, 0.1)
+  }
+  b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  for(i_life in 1:(n_life-1)) {
+    b_life[i_life] ~ dnorm(0, 0.1)
+  }
+  b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  # for(i_lifesection in 1:(n_lifesection-1)) {
+  #   b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  # }
+  # b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  for(i_length in 1:(n_length-1)) {
+    b_length[i_length] ~ dnorm(0, 0.1)
+  }
+  b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[3]] <- surv_vbls_jags_out
+
+
+
+
+
+## Model 4: baseline + section x life 
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      # + b_section[sectionmode[i]]
+      # + b_life[life_hist[i]]
+      + b_lifesection[lifesection[i]]
+      # + b_length[lengthcut[i]]
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  # for(i_section in 1:(n_section-1)) {
+  #   b_section[i_section] ~ dnorm(0, 0.1)
+  # }
+  # b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  # for(i_life in 1:(n_life-1)) {
+  #   b_life[i_life] ~ dnorm(0, 0.1)
+  # }
+  # b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  for(i_lifesection in 1:(n_lifesection-1)) {
+    b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  }
+  b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  # for(i_length in 1:(n_length-1)) {
+  #   b_length[i_length] ~ dnorm(0, 0.1)
+  # }
+  # b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[4]] <- surv_vbls_jags_out
+
+
+
+
+
+## Model 5: baseline + section x life + length
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      # + b_section[sectionmode[i]]
+      # + b_life[life_hist[i]]
+      + b_lifesection[lifesection[i]]
+      + b_length[lengthcut[i]]
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  # for(i_section in 1:(n_section-1)) {
+  #   b_section[i_section] ~ dnorm(0, 0.1)
+  # }
+  # b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  # for(i_life in 1:(n_life-1)) {
+  #   b_life[i_life] ~ dnorm(0, 0.1)
+  # }
+  # b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  for(i_lifesection in 1:(n_lifesection-1)) {
+    b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  }
+  b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  for(i_length in 1:(n_length-1)) {
+    b_length[i_length] ~ dnorm(0, 0.1)
+  }
+  b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[5]] <- surv_vbls_jags_out
+
+
+## simplifying model 2
+simpsection <- ifelse(sectionmode=="Upper", 2, 1) # combining "Lower" and "Middle" 
+simpsection <- simpsection[!is.na(lengthcut)]
+surv_vbls_data$simpsection <- simpsection
+surv_vbls_data$n_simpsection <- 2
+
+## Model 6: baseline + section (2 levels) + life 
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      # + b_section[sectionmode[i]]
+      + b_life[life_hist[i]]
+      # + b_lifesection[lifesection[i]]
+      # + b_length[lengthcut[i]]
+      + b_simpsection[simpsection[i]]
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  # for(i_section in 1:(n_section-1)) {
+  #   b_section[i_section] ~ dnorm(0, 0.1)
+  # }
+  # b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  for(i_life in 1:(n_life-1)) {
+    b_life[i_life] ~ dnorm(0, 0.1)
+  }
+  b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  # for(i_lifesection in 1:(n_lifesection-1)) {
+  #   b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  # }
+  # b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  # for(i_length in 1:(n_length-1)) {
+  #   b_length[i_length] ~ dnorm(0, 0.1)
+  # }
+  # b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+  
+  for(i_simpsection in 1:(n_simpsection-1)) {
+    b_simpsection[i_simpsection] ~ dnorm(0, 0.1)
+  }
+  b_simpsection[n_simpsection] <- -sum(b_simpsection[1:(n_simpsection-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life",
+                                                          "b_lifesection","b_length","b_simpsection"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[6]] <- surv_vbls_jags_out
+
+
+
+## simplifying model 4
+simplifesection <- ifelse(life_hist=="mainstem",
+                          ifelse(sectionmode=="Upper", 2, 1), 3) 
+table(simplifesection, sectionmode, life_hist)
+simplifesection <- simplifesection[!is.na(lengthcut)]
+surv_vbls_data$simplifesection <- simplifesection
+surv_vbls_data$n_simplifesection <- 3
+
+## Model 7: baseline + simplified section x life (3 levels)
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+      logit(p[i,j]) <- b0[j-1] 
+      # + b_section[sectionmode[i]]
+      # + b_life[life_hist[i]]
+      # + b_lifesection[lifesection[i]]
+      # + b_length[lengthcut[i]]
+      # + b_simpsection[simpsection[i]]
+      + b_simplifesection[simplifesection[i]]
+    }
+  }
+  
+  for(j in 1:np) {
+    b0[j] ~ dnorm(0, 0.1)
+  }
+  
+  # for(i_section in 1:(n_section-1)) {
+  #   b_section[i_section] ~ dnorm(0, 0.1)
+  # }
+  # b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+  
+  # for(i_life in 1:(n_life-1)) {
+  #   b_life[i_life] ~ dnorm(0, 0.1)
+  # }
+  # b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+  
+  # for(i_lifesection in 1:(n_lifesection-1)) {
+  #   b_lifesection[i_lifesection] ~ dnorm(0, 0.1)
+  # }
+  # b_lifesection[n_lifesection] <- -sum(b_lifesection[1:(n_lifesection-1)])
+  
+  # for(i_length in 1:(n_length-1)) {
+  #   b_length[i_length] ~ dnorm(0, 0.1)
+  # }
+  # b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+  
+  # for(i_simpsection in 1:(n_simpsection-1)) {
+  #   b_simpsection[i_simpsection] ~ dnorm(0, 0.1)
+  # }
+  # b_simpsection[n_simpsection] <- -sum(b_simpsection[1:(n_simpsection-1)])
+  
+  for(i_simplifesection in 1:(n_simplifesection-1)) {
+    b_simplifesection[i_simplifesection] ~ dnorm(0, 0.1)
+  }
+  b_simplifesection[n_simplifesection] <- -sum(b_simplifesection[1:(n_simplifesection-1)])
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","b0","b_section","b_life",
+                                                          "b_lifesection","b_length",
+                                                          "b_simpsection","b_simplifesection"), #"survtable",
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+jagsouts[[7]] <- surv_vbls_jags_out
+
+
+
+## comparing DIC scores across models!!
+sapply(jagsouts, function(x) x$DIC)
+# [1] 1592.138 1518.726 1521.173 1544.973 1566.863
+# [1] 1592.145 1540.600 1540.535 1543.989 1556.535 1531.136 1536.323 ??????
+
+sapply(jagsouts, function(x) max(unlist(x$Rhat), na.rm=T))
+# [1] 1.001506 1.002097 1.002676 1.001322 1.001226 1.003476 1.002978
+
+## comparing parameter inferences
+comparecat(jagsouts, p="b0")
+
+comparecat(jagsouts, p="b_section")
+comparecat(jagsouts, p="b_simpsection")
+comparecat(jagsouts, p="b_life")
+comparecat(jagsouts, p="b_lifesection")
+comparecat(jagsouts, p="b_simplifesection")
+
+
+## choose a model
+## re-run with full data, if we take length out
+## maybe even re-run all models without length and choose again
+## caterpillar plots of baseline probs and effects
+## caterpillar plots of expit(b0) and exp(effects)
+## compare expit(b0) to p from previous model
+## put survtable back in and do time series plot
+
+## think about post pred, loocv, etc
+## plot model diagnostic stuff anyway
+
+### actually - looks like lower/middle mainstem vs. upper mainstem vs. tribs (3 cats)
+
+
+## ok, let's build some bones
+surv_vbls_jags_out <- jagsouts[[2]]
+
+caterpillar(surv_vbls_jags_out, p="b0", xax=rep("",length(plotdates)-1))
+axis(side=1, at=0:surv_data$np, plotdates, las=2)
+caterpillar(surv_vbls_jags_out, p="b_section", xax=levels(as.factor(sectionmode)))
+abline(h=0:1, lty=3)
+caterpillar(surv_vbls_jags_out, p="b_life", xax=levels(as.factor(life_hist)))
+abline(h=0:1, lty=3)
+
+caterpillar(surv_jags_out, p="p", xax=rep("", surv_data$np), col=2)  # 50 & 95% credible intervals for each p!
+# mnDates1 <- as.character(mnDates)
+# plotdates <- c("Capture 1", mnDates1[2:3],"Capture 2", mnDates1[4:5],"Capture 3",mnDates1[6:length(mnDates)])
+axis(side=1, at=0:surv_data$np, plotdates, las=2)
+
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_section), xax=levels(as.factor(sectionmode)))
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_life), xax=levels(as.factor(life_hist)))
+abline(h=0:1, lty=3)
+
+# caterpillar(expit(surv_vbls_jags_out$sims.list$b0), xax=rep("",length(plotdates)-1))
+# axis(side=1, at=0:surv_data$np, plotdates, las=2)
+
+xx1 <- as.data.frame(surv_jags_out$sims.list$p)
+xx2 <- as.data.frame(expit(surv_vbls_jags_out$sims.list$b0))
+colnames(xx1) <- plotdates[-1]
+colnames(xx2) <- plotdates[-1]
+comparecat(list(xx1, xx2), col=c(2,4))
