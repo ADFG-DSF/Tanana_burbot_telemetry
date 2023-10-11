@@ -14,6 +14,10 @@ library(jagsUI)      # for running Bayesian survival analysis
 library(jagshelper)  # for plotting & model diagnostics
 # Note: JAGS can be downloaded here: https://sourceforge.net/projects/mcmc-jags/
 
+library(shiny)       # This is used for some interactive visualizations
+runShiny <- F        # IMPORTANT: turning on/off the interactive visualizations.
+                     # ==> leave this to FALSE for reproducible code
+
 
 # load data (from folder available on Github)
 load(file="data/tyb.Rdata")  # rivernetwork created from shapefile
@@ -986,6 +990,7 @@ make_a_ts(lwdvec=as.numeric(cut(dtab$dist_per_obs,3)),
 ### IMPORTANT!! - If you close the app but it keeps running and you are prompted 
 ### to restart R, click No, then click on the console and hit <Esc> 
 
+if(runShiny) {
 library(shiny)
 server <- shinyServer(function(input, output) {
   output$thePlot <- renderPlot(
@@ -1004,7 +1009,7 @@ ui <- shinyUI(fluidPage(
   )
 ))
 shinyApp(ui = ui, server = server)
-
+}
 
 
 ### investigating a hierarchical clustering algorithm to group similar fish
@@ -1029,6 +1034,7 @@ make_a_ts(colvec = jagshelper::rcolors(100)[grp], lwdvec = 2)
 ### I would be curious if the groups identified have any relationship with 
 ### known variables (life history, size, etc)
 
+if(runShiny) {
 library(shiny)
 server <- shinyServer(function(input, output) {
   output$thePlot <- renderPlot(
@@ -1061,6 +1067,7 @@ ui <- shinyUI(fluidPage(
   )
 ))
 shinyApp(ui = ui, server = server)
+}
 
 
 # plot by itself for the k=14 clustering result
@@ -1235,6 +1242,20 @@ AIC(lm1)
 plot(lm1)
 anova(lm1)
 summary(lm1)
+
+## making a table of all models, sorted by AIC
+AICtbl <- data.frame(alltheAICs)
+AICtbl$Selected <- ""
+AICtbl$Selected[96] <- "***"
+AICtbl <- AICtbl[order(AICtbl$alltheAICs),]
+AICtbl <- rename(AICtbl, AIC=alltheAICs)
+AICtbl$deltaAIC <- AICtbl$AIC - AICtbl$AIC[1]
+AICtbl$Model <- rownames(AICtbl)
+rownames(AICtbl) <- 1:nrow(AICtbl)
+AICtbl <- select(AICtbl, c("Model","AIC","deltaAIC","Selected"))
+print(AICtbl)
+knitr::kable(AICtbl, digits=2)
+
 
 
 ### Fitting an equivalent Bayesian model, for the purpose of visualizing effect sizes.
@@ -1856,6 +1877,8 @@ legend("bottomright", legend=c("p raw", "p adjusted"), pch=c(1,16))
 
 
 ## Bayesian survival model - next version
+## THIS IS NOT THE FINAL VERSION USED IN THE REPORT
+## 
 ## Investigating whether individual-level variables (size, life history, section)
 ## affect survival probability, globally (not looking at interactions!!)
 
@@ -2044,6 +2067,9 @@ cat('model {
       # + b_life[life_hist[i]] 
       # + b_lifesection[lifesection[i]] 
       # + b_length[lengthcut[i]] 
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2076,7 +2102,8 @@ cat('model {
   tstart <- Sys.time()
   print(tstart)
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
-                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2097,6 +2124,9 @@ cat('model {
       + b_life[life_hist[i]]
       # + b_lifesection[lifesection[i]] 
       # + b_length[lengthcut[i]] 
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2129,7 +2159,8 @@ cat('model {
   tstart <- Sys.time()
   print(tstart)
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
-                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2152,6 +2183,9 @@ cat('model {
       + b_life[life_hist[i]]
       # + b_lifesection[lifesection[i]] 
       + b_length[lengthcut[i]]
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2184,7 +2218,8 @@ cat('model {
   tstart <- Sys.time()
   print(tstart)
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
-                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2207,6 +2242,9 @@ cat('model {
       # + b_life[life_hist[i]]
       + b_lifesection[lifesection[i]]
       # + b_length[lengthcut[i]]
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2239,7 +2277,8 @@ cat('model {
   tstart <- Sys.time()
   print(tstart)
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
-                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2262,6 +2301,9 @@ cat('model {
       # + b_life[life_hist[i]]
       + b_lifesection[lifesection[i]]
       + b_length[lengthcut[i]]
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2294,7 +2336,8 @@ cat('model {
   tstart <- Sys.time()
   print(tstart)
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
-                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length"), #"survtable",
+                                     parameters.to.save=c("p","b0","b_section","b_life","b_lifesection","b_length",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2321,6 +2364,9 @@ cat('model {
       # + b_lifesection[lifesection[i]]
       # + b_length[lengthcut[i]]
       + b_simpsection[simpsection[i]]
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2359,7 +2405,8 @@ cat('model {
   print(tstart)
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
                                      parameters.to.save=c("p","b0","b_section","b_life",
-                                                          "b_lifesection","b_length","b_simpsection"), #"survtable",
+                                                          "b_lifesection","b_length","b_simpsection",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2390,6 +2437,9 @@ cat('model {
       # + b_length[lengthcut[i]]
       # + b_simpsection[simpsection[i]]
       + b_simplifesection[simplifesection[i]]
+  
+      survtable_pp[i,j] ~ dbin(p[i,j], survtable[i,j-1])   ### this is included for pp check
+
     }
   }
   
@@ -2434,7 +2484,8 @@ cat('model {
   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
                                      parameters.to.save=c("p","b0","b_section","b_life",
                                                           "b_lifesection","b_length",
-                                                          "b_simpsection","b_simplifesection"), #"survtable",
+                                                          "b_simpsection","b_simplifesection",
+                                                          "survtable_pp"), #"survtable",
                                      n.chains=ncores, parallel=T, n.iter=niter,
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
@@ -2445,13 +2496,15 @@ jagsouts[[7]] <- surv_vbls_jags_out
 # # maybe not the greatest move, but I don't intend to archive this
 # save(jagsouts, file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/jagsouts5000k.Rdata")
 # load(file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/jagsouts5000k.Rdata")
+# save(jagsouts, file="C:/Users/mbtyers/Documents/jagsouts5000k.Rdata")
+# load(file="C:/Users/mbtyers/Documents/jagsouts5000k.Rdata")
 
 
 
-## Model 1: baseline                                        + 0  stable
+## Model 1: baseline                                        + 0  stable wrt DIC
 ## Model 2: baseline + section + life                       + 3
 ## Model 3: baseline + section + life + length              + 6
-## Model 4: baseline + section x life                       + 5  stable
+## Model 4: baseline + section x life                       + 5  stable wrt DIC
 ## Model 5: baseline + section x life + length              + 8
 ## Model 6: baseline + section (2 levels) + life            + 2
 ## Model 7: baseline + simplified section x life (3 levels) + 2
@@ -2464,6 +2517,7 @@ sapply(jagsouts, function(x) x$DIC)
 # [1] 1592.138 1518.726 1521.173 1544.973 1566.863   at 1000k
 # [1] 1592.145 1540.600 1540.535 1543.989 1556.535 1531.136 1536.323 ??????
 # [1] 1590.691 1517.897 1553.076 1543.333 1575.620 1520.864 1545.220   at 5000k 
+# [1] 1593.506 1546.272 1535.331 1545.482 1555.821 1524.103 1545.590   at 5000k 
 
 # observation: with traceworstRhat(jagsouts[[ii]]), deviance is multimodal with 
 # models exhibiting inconsistent DIC (3 & 5 are worst)
@@ -2472,6 +2526,32 @@ sapply(jagsouts, function(x) x$DIC)
 sapply(jagsouts, function(x) max(unlist(x$Rhat), na.rm=T))
 # [1] 1.001506 1.002097 1.002676 1.001322 1.001226 1.003476 1.002978
 # [1] 1.001305 1.002591 1.002157 1.001268 1.001304 1.001102 1.001338  at 5000k
+# [1] 1.007561 1.019480 1.013278 1.012641 1.015823 1.009674 1.012423  at 5000k - but now has survtable_pp
+
+
+## comparing predictive accuracy of all models
+gotitright <- list()
+for(iout in 1:length(jagsouts)) {
+  ### for everywhere it's relevant, how often does survtable_pp get it right
+  survtable_pp <- jagsouts[[iout]]$sims.list$survtable_pp
+  # head(apply(!is.na(survtable_pp), 2:3, mean))
+  # head(surv_vbls_data$survtable)
+  gotitright[[iout]] <- matrix(NA, nrow=nrow(surv_vbls_data$survtable), ncol=ncol(surv_vbls_data$survtable))
+  for(i in 1:nrow(gotitright[[iout]])) {
+    for(j in 1:ncol(gotitright[[iout]])) {
+      gotitright[[iout]][i,j] <- mean(survtable_pp[,i,j] == surv_vbls_data$survtable[i,j])
+    }
+  }
+  par(mfrow=c(2,2))
+  plot(as.numeric(gotitright[[iout]]), col=2+as.numeric(surv_vbls_data$survtable))
+  plot(as.numeric(jagsouts[[iout]]$mean$p), as.numeric(gotitright[[iout]]), col=2+as.numeric(surv_vbls_data$survtable))
+  boxplot(as.numeric(gotitright[[iout]]) ~ as.numeric(surv_vbls_data$survtable), main=iout)
+}
+sapply(gotitright, mean, na.rm=T)
+# [1] 0.8483992 0.8519330 0.8520675 0.8525197 0.8525339 0.8519425 0.8527773  at 5000k
+
+## should really try k-fold cross validation for a better statement of predictive accuracy
+
 
 ## comparing parameter inferences
 comparecat(jagsouts, p="b0")
@@ -2530,3 +2610,228 @@ xx2 <- as.data.frame(expit(surv_vbls_jags_out$sims.list$b0))
 colnames(xx1) <- plotdates[-1]
 colnames(xx2) <- plotdates[-1]
 comparecat(list(xx1, xx2), col=c(2,4))
+
+
+
+### FINAL MODEL VERSION, WITH PARAMETER NAMES CONSISTENT WITH REPORT!
+# bundle data to pass into JAGS
+surv_vbls_data <- list(X=survtable,           # renamed for consistency
+                       firstdead=firstdead,
+                       firstpresent=firstpresent,
+                       n=nrow(survtable),
+                       np=ncol(survtable)-1,
+                       z=as.numeric(as.factor(paste(life_hist, sectionmode))),    # renamed for consistency
+                       n_tau=length(unique(paste(life_hist, sectionmode))))  #,   # renamed for consistency
+
+## NO LONGER NEEDED
+                       # sectionmode=as.numeric(as.factor(sectionmode)),
+                       # n_section=length(unique(sectionmode)),
+                       # life_hist=as.numeric(as.factor(life_hist)),
+                       # n_life=length(unique(life_hist)),
+                       # lengthcut=as.numeric(as.factor(lengthcut)),
+                       # n_length=length(levels(lengthcut)))
+
+## NO LONGER NEED TO REMOVE VALUES WHERE is.na(lengthcut) SINCE IT'S NOT USED
+
+# surv_vbls_data$survtable <- surv_vbls_data$survtable[!is.na(lengthcut),]
+# surv_vbls_data$firstdead <- surv_vbls_data$firstdead[!is.na(lengthcut)]
+# surv_vbls_data$firstpresent <- surv_vbls_data$firstpresent[!is.na(lengthcut)]
+# surv_vbls_data$sectionmode <- surv_vbls_data$sectionmode[!is.na(lengthcut)]
+# surv_vbls_data$lifesection <- surv_vbls_data$lifesection[!is.na(lengthcut)]
+# surv_vbls_data$life_hist <- surv_vbls_data$life_hist[!is.na(lengthcut)]
+# surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
+# surv_vbls_data$n <- sum(!is.na(lengthcut))
+
+# JAGS controls
+niter <- 50*1000  # 100k takes 4.3 min  - now takes 1 minute and change
+ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+
+## Model 4: baseline + section x life 
+surv_vbls_jags <- tempfile()
+cat('model {
+  for(i in 1:n) {  
+    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+      X[i,j] ~ dbin(p[i,j], X[i,j-1])
+      logit(p[i,j]) <- gamma[j-1] + tau[z[i]]
+      
+      ### this is included for post predictive check
+      X_pp[i,j] ~ dbin(p[i,j], X[i,j-1])   
+    }
+  }
+  
+  for(j in 1:np) {
+    gamma[j] ~ dnorm(0, 0.1)
+  }
+  
+  for(i_z in 1:(n_tau-1)) {
+    tau[i_z] ~ dnorm(0, 0.1)
+  }
+  tau[n_tau] <- -sum(tau[1:(n_tau-1)])
+  
+}', file=surv_vbls_jags)
+
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+                                     parameters.to.save=c("p","gamma","tau","X","X_pp"),
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+
+
+## MODEL DIAGNOSTICS ONE MORE TIME
+
+# checking output & assessing convergence 
+nbyname(surv_vbls_jags_out)     # how many parameters are returned
+par(mfrow=c(2,2))
+plotRhats(surv_vbls_jags_out)   # plotting Rhat for each parameter: near 1 is good
+traceworstRhat(surv_vbls_jags_out)  # trace plots for worst parameters
+
+par(mfrow=c(4,4))
+tracedens_jags(surv_vbls_jags_out, p="gamma")
+
+par(mfrow=c(2,2))
+caterpillar(surv_vbls_jags_out, p="gamma")
+abline(h=0, lty=3)
+caterpillar(surv_vbls_jags_out, p="tau")
+abline(h=0, lty=3)
+
+#### --- STILL NEED TO LABEL X AXES FOR THESE PLOTS
+#### --- would also like to create some tables from these
+caterpillar(expit(surv_vbls_jags_out$sims.list$gamma), main="expit(gamma) - Baseline Probabilities")
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$tau), main="exp(tau) - Multiplicative Effects")
+abline(h=0:1, lty=3)
+
+par(mfrow=c(2,2))
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_life))
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$b_length))
+abline(h=0:1, lty=3)
+
+
+## calculating predictive accuracy of final model
+X_pp <- surv_vbls_jags_out$sims.list$X_pp
+  # head(apply(!is.na(X_pp), 2:3, mean))
+  # head(surv_vbls_data$X)
+gotitright <- matrix(NA, nrow=nrow(surv_vbls_data$X), ncol=ncol(surv_vbls_data$X))
+for(i in 1:nrow(gotitright)) {
+  for(j in 1:ncol(gotitright)) {
+    gotitright[i,j] <- mean(X_pp[,i,j] == surv_vbls_data$X[i,j])
+  }
+}
+par(mfrow=c(2,2))
+plot(as.numeric(gotitright), col=2+as.numeric(surv_vbls_data$X))
+plot(as.numeric(surv_vbls_jags_out$mean$p), as.numeric(gotitright), col=2+as.numeric(surv_vbls_data$X))
+boxplot(as.numeric(gotitright) ~ as.numeric(surv_vbls_data$X))
+
+plot(density(as.numeric(gotitright)[as.numeric(surv_vbls_data$X)==1], na.rm=T, bw=.05), xlim=0:1, col=3)
+lines(density(as.numeric(gotitright)[as.numeric(surv_vbls_data$X)==0], na.rm=T, bw=.05), xlim=0:1, col=2)
+
+## how often the model correctly predicts state
+mean(gotitright, na.rm=T)
+
+# how often the model correctly predicts the state, dead vs alive
+tapply(as.numeric(gotitright), as.numeric(surv_vbls_data$X), mean, na.rm=T)
+
+
+## Trying k-fold cross validation:
+## Leaving out a proportion of the data (starting with 10%) and assessing
+## predictive accuracy of the model.
+
+## creating new input data, with a random sample of values left out of 
+## the survival matrix X.  These will need to be values between 
+## firstpresent[i,] and firstdead[i,] of a given row of data
+surv_vbls_data_kfold <- surv_vbls_data
+
+## create vectors of row/column pairs for testable data
+rowstosample <- columnstosample <- NA
+k <- 1  # index for sample vectors (will be appended)
+for(i in 1:nrow(surv_vbls_data$X)) {  # individual
+  for(j in surv_vbls_data$firstpresent[i]:surv_vbls_data$firstdead[i]) { # sampling event
+    # rowstosample[k] <- i    # could also add !is.na condition
+    # columnstosample[k] <- j
+    # k <- k+1
+    # this does not work.  Conditions that will:
+    # !is.na(X[i,j]) and
+    # X[i,j+1] is NA
+    # or firstdead[i] (alternatively, X[i,j]==0)
+    # or X[i,j+1]==0
+    if(!is.na(surv_vbls_data$X[i,j])) {
+      thisone <- (surv_vbls_data$X[i,j]==0)
+      if(j < ncol(surv_vbls_data$X)) {
+        if(surv_vbls_data$X[i,j+1]==0 | is.na(surv_vbls_data$X[i,j+1])) {
+          thisone <- T
+        }
+      }
+      if(thisone) {
+        rowstosample[k] <- i    
+        columnstosample[k] <- j
+        k <- k+1
+      }
+    }
+  }
+}
+length(rowstosample)   # 399 to sample from
+
+psample <- 0.2  # proportion to censor for cross-validation
+nsample <- round(psample*length(rowstosample))  # 80
+
+# taking a sample and censoring data
+thesample <- sample(1:length(rowstosample), nsample)  
+for(i in 1:length(thesample)) {
+  surv_vbls_data_kfold$X[rowstosample[thesample[i]], columnstosample[thesample[i]]] <- NA
+}
+
+# JAGS controls
+niter <- 50*1000  # 100k takes 4.3 min  - now takes 1 minute and change
+ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+{
+  tstart <- Sys.time()
+  print(tstart)
+  surv_vbls_jags_out_kfold <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data_kfold,
+                                     parameters.to.save=c("p","gamma","tau","X","X_pp"),
+                                     n.chains=ncores, parallel=T, n.iter=niter,
+                                     n.burnin=niter/2, n.thin=niter/2000)
+  print(Sys.time() - tstart)
+}
+
+## inelegant loop to populate a vector of cv predictive accuracy
+mn_kfold <- NA
+true_kfold <- NA
+condition <- NA
+for(i in 1:length(thesample)) {
+  true_kfold[i] <- surv_vbls_data$X[rowstosample[thesample[i]], 
+                                    columnstosample[thesample[i]]]
+  mn_kfold[i] <- mean(surv_vbls_jags_out_kfold$sims.list$X[, rowstosample[thesample[i]], 
+                                                                   columnstosample[thesample[i]]])
+  if(true_kfold[i]==0) condition[i] <- 1
+  if(columnstosample[thesample[i]] < ncol(surv_vbls_data$X)) {
+    ### here i am
+    if(is.na(surv_vbls_data$X[rowstosample[thesample[i]], 1+columnstosample[thesample[i]]])) {
+      condition[i] <- 3
+    } else {
+    if(surv_vbls_data$X[rowstosample[thesample[i]], 1+columnstosample[thesample[i]]]==0) {
+      condition[i] <- 2
+    }}
+  }
+}
+plot(mn_kfold ~ true_kfold)
+table(true_kfold)
+table(condition)
+
+# if(!is.na(surv_vbls_data$X[i,j])) {
+#   thisone <- (surv_vbls_data$X[i,j]==0)
+#   if(j < ncol(surv_vbls_data$X)) {
+#     if(surv_vbls_data$X[i,j+1]==0 | is.na(surv_vbls_data$X[i,j+1])) {
+#       thisone <- T
+#     }
+#   }
+#   if(thisone) {
+#     rowstosample[k] <- i    
+#     columnstosample[k] <- j
+#     k <- k+1
+#   }
+# }
