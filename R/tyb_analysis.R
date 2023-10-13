@@ -931,7 +931,11 @@ boxplot(telem3d$total_length[,1] ~ telem3d$tagging_habitat[,1], xlab="Tagging ha
 mosaicplot(table(sectionmode, telem3d$life_history[,1]), xlab="River section", ylab="Life history", main="",col=T)
 
 ## considering total length and upriver position as categorical
-lengthcut <- cut(telem3d$total_length[,1], breaks=c(600, 700, 800, 900, 1050))
+
+### include.lowest=T CHANGES EVERYTHING!!!!
+lengthcut <- cut(telem3d$total_length[,1], breaks=c(600, 700, 800, 900, 1050), include.lowest = T)
+###
+
 uprivercut <- cut(avgupriver, breaks=c(0, 300, 500, 800, 1000))
 par(mfrow=c(2,4))
 par(mar=c(7.1, 4.1, 4.1, 2.1))
@@ -1123,6 +1127,13 @@ total_length <- telem3d$total_length[,1]
 ### - v2 are possible variables for life history
 ### - v3 are possible variables for length.
 
+# fix: need to remove NA values for AIC-based comparisons to be appropriate
+vbl_list <- list(tagging_loc,avgupriver,uprivercut,sectionmode,
+                tagging_hab,life_hist,
+                total_length,lengthcut,
+                dtab$homerange,dtab$cumuldist,dtab$dist_per_obs)
+sapply(vbl_list, function(x) sum(is.na(x)))
+
 v1 <- c("tagging_loc","avgupriver","uprivercut","sectionmode")
 v2 <- c("tagging_hab","life_hist")
 v3 <- c("total_length","lengthcut")
@@ -1236,17 +1247,32 @@ par(mfrow=c(2,3))
 plot(alltheAICs)
 abline(h=min(alltheAICs)+2, lty=2)
 data.frame(alltheAICs, 1:length(alltheAICs))[alltheAICs < min(alltheAICs)+2,]
-# lm1 <- allthelms[[which.min(alltheAICs)]]
-lm1 <- allthelms[[96]]
+lm1 <- allthelms[[which.min(alltheAICs)]]
+# lm1 <- allthelms[[96]]
 AIC(lm1)
 plot(lm1)
 anova(lm1)
 summary(lm1)
 
+## making an equivalent model from combinations (easier to interpret)
+lifesection <- paste(life_hist, sectionmode)
+lm2 <- lm(y ~ lifesection)
+summary(lm2)
+anova(lm2)
+anova(lm(y ~ lifesection + lengthcut))
+AIC(lm2)
+
+lm3 <- lm(y ~ life_hist*sectionmode)
+anova(lm3)
+AIC(lm3)
+AIC(lm(y ~ life_hist+sectionmode)) - AIC(lm3)
+anova(lm(y~life_hist*sectionmode+lengthcut),lm(y~life_hist*sectionmode))
+AIC(lm(y~life_hist*sectionmode+lengthcut)) - AIC(lm(y~life_hist*sectionmode))
+
 ## making a table of all models, sorted by AIC
 AICtbl <- data.frame(alltheAICs)
 AICtbl$Selected <- ""
-AICtbl$Selected[96] <- "***"
+AICtbl$Selected[16] <- "***"
 AICtbl <- AICtbl[order(AICtbl$alltheAICs),]
 AICtbl <- rename(AICtbl, AIC=alltheAICs)
 AICtbl$deltaAIC <- AICtbl$AIC - AICtbl$AIC[1]
@@ -1255,113 +1281,132 @@ rownames(AICtbl) <- 1:nrow(AICtbl)
 AICtbl <- select(AICtbl, c("Model","AIC","deltaAIC","Selected"))
 print(AICtbl)
 knitr::kable(AICtbl, digits=2)
+# write.csv(AICtbl, file="tables/xxx1.csv")
 
 
-
-### Fitting an equivalent Bayesian model, for the purpose of visualizing effect sizes.
-### This model is parameterized differently from the model above in two ways:
-### - Instead of considering main effects & interaction terms for the one-way
-###   interaction between life_hist and sectionmode, a single predictor variable
-###   was constructed by concatenating the two.
-### - Perhaps more importantly, this model is parameterized in terms of a global
-###   mean or baseline, plus effects for [length] and [life_hist & sectionmode].
-###   The global mean should not be interpreted as the mean across all fish, but
-###   rather across all category means.
-### Note: the previous version of this model included an interaction between 
-### avg upriver position and life history, and model code should still be updated.
-
-# specify model, which is written to a temporary file
-dist_jags <- tempfile()
-cat('model {
-  for(i in 1:n) {
-    y[i] ~ dnorm(mu[i], tau)
-    mu[i] <- b0 + b_length[lengthcut[i]] + b_uplife[upriver_lifehist[i]]
-  }
-
-  for(j_length in 1:(nlength-1)) {
-    b_length[j_length] ~ dnorm(0, 0.001)
-  }
-  b_length[nlength] <- -sum(b_length[1:(nlength-1)])
-
-  for(j_uplife in 1:(nuplife-1)) {
-    b_uplife[j_uplife] ~ dnorm(0, 0.001)
-  }
-  b_uplife[nuplife] <- -sum(b_uplife[1:(nuplife-1)])
-
-  tau <- pow(sig, -2)
-  sig ~ dunif(0, 10)
-  b0 ~ dnorm(0, 0.001)
-}', file=dist_jags)
+### making an output table: median, sd, 95%ci backtransformed from log scale
+natmed <- tapply(dtab$dist_per_obs, lifesection, median, na.rm=T)
+natsd <- tapply(dtab$dist_per_obs, lifesection, sd, na.rm=T)
+ymn <- tapply(y, lifesection, median, na.rm=T)
+yn <- table(lifesection[!is.na(dtab$dist_per_obs)])
+yse <- tapply(y, lifesection, sd, na.rm=T)/sqrt(yn)
+natcilo <- exp(ymn - 2*yse)
+natcihi <- exp(ymn + 2*yse)
+cichar <- paste0("(", round(natcilo,2), " - ", round(natcihi,2), ")")
+outtbl <- data.frame(Median=natmed, SD=natsd, CI95=cichar)
+print(outtbl)
+kable(outtbl, digits=2)
+# write.csv(outtbl, file="tables/xxx2.csv")
 
 
-# bundle data to pass into JAGS
-dist_data <- list(lengthcut=as.numeric(as.factor(lengthcut[!is.na(y) & !is.na(lengthcut)])),
-                  # upriver_lifehist=as.numeric(as.factor(paste(uprivercut, life_hist)[!is.na(y) & !is.na(lengthcut)])),
-                  # upriver_lifehist=as.numeric(as.factor(paste(life_hist, uprivercut)[!is.na(y) & !is.na(lengthcut)])),
-                  upriver_lifehist=as.numeric(as.factor(paste(life_hist, sectionmode)[!is.na(y) & !is.na(lengthcut)])),
-                  y=y[!is.na(y) & !is.na(lengthcut)])
-# dist_data$lengthcut <- as.numeric(as.factor(dist_data$lengthcut_raw))
-dist_data$nlength <- length(unique(dist_data$lengthcut))
-# dist_data$upriver_lifehist <- as.numeric(as.factor(dist_data$upriver_lifehist_raw))
-dist_data$nuplife <- length(unique(dist_data$upriver_lifehist))
-dist_data$n <- length(dist_data$y)
+### THE BAYESIAN MODEL BELOW IS NO LONGER USED.  THE FINAL MODEL WAS SIMPLIFIED
+### TO NO LONGER INCLUDE LENGTH, AND AS SUCH THE BAYESIAN MODEL NO LONGER ADDED
+### UTILITY TO INTERPRETATION.
 
-# JAGS controls
-niter <- 10000
-# ncores <- 3
-ncores <- min(10, parallel::detectCores()-1)
-
-{  ## running JAGS
-  tstart <- Sys.time()
-  print(tstart)
-  dist_jags_out <- jagsUI::jags(model.file=dist_jags, data=dist_data,
-                                parameters.to.save=c("b0","b_length","b_uplife","sig"),
-                                n.chains=ncores, parallel=T, n.iter=niter,
-                                n.burnin=niter/2, n.thin=niter/2000)
-  print(Sys.time() - tstart)
-}
-## a few JAGS diagnostic plots
-# nbyname(dist_jags_out)
-# plotRhats(dist_jags_out)
-# traceworstRhat(dist_jags_out)
-
-## pulling out data.frames associated with posteriors of length & life history/position effects
-b_length <- jags_df(dist_jags_out, p="b_length")
-b_uplife <- jags_df(dist_jags_out, p="b_uplife")
-
-
-## Plotting effect sizes!!
-
-par(mar=c(10.1, 4.1, 2.1, 2.1))  ## tweaking margins so plots below will work
-
-par(mfrow=c(2,2))
-caterpillar(b_length, xax=rep("",4), main="Effect sizes for length category")
-axis(1, 1:4, label=levels(as.factor(lengthcut)), las=2)
-abline(h=0, lty=3)
-caterpillar(b_uplife, xax=rep("",ncol(b_uplife)), main="Effect sizes for section mode & life history")
-# axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,uprivercut))), las=2)
-axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,sectionmode))), las=2)
-abline(h=0, lty=3)
-caterpillar(exp(b_length), xax=rep("",4), 
-            main="Exponentiated effect sizes for length category",
-            ylab="Multiplicative change from baseline")
-axis(1, 1:4, label=levels(as.factor(lengthcut)), las=2)
-abline(h=1, lty=3)
-caterpillar(exp(b_uplife), xax=rep("",ncol(b_uplife)), 
-            main="Exponentiated effect sizes for section mode & life history",
-            ylab="Multiplicative change from baseline")
-# axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,uprivercut))), las=2)
-axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,sectionmode))), las=2)
-abline(h=1, lty=3)
-
-## Looking at how much of the effect size posteriors are above/below zero
-## This can be taken as evidence of which effects are different from zero 
-colMeans(b_length>0)
-colMeans(b_uplife>0)
-
-## can interpret these as p-values(ish)
-sapply(colMeans(b_length>0), function(x) 2*min(x,1-x))
-sapply(colMeans(b_uplife>0), function(x) 2*min(x,1-x))
+# ### Fitting an equivalent Bayesian model, for the purpose of visualizing effect sizes.
+# ### This model is parameterized differently from the model above in two ways:
+# ### - Instead of considering main effects & interaction terms for the one-way
+# ###   interaction between life_hist and sectionmode, a single predictor variable
+# ###   was constructed by concatenating the two.
+# ### - Perhaps more importantly, this model is parameterized in terms of a global
+# ###   mean or baseline, plus effects for [length] and [life_hist & sectionmode].
+# ###   The global mean should not be interpreted as the mean across all fish, but
+# ###   rather across all category means.
+# ### Note: the previous version of this model included an interaction between 
+# ### avg upriver position and life history, and model code should still be updated.
+# 
+# # specify model, which is written to a temporary file
+# dist_jags <- tempfile()
+# cat('model {
+#   for(i in 1:n) {
+#     y[i] ~ dnorm(mu[i], tau)
+#     mu[i] <- b0 + b_length[lengthcut[i]] + b_uplife[upriver_lifehist[i]]
+#   }
+# 
+#   for(j_length in 1:(nlength-1)) {
+#     b_length[j_length] ~ dnorm(0, 0.001)
+#   }
+#   b_length[nlength] <- -sum(b_length[1:(nlength-1)])
+# 
+#   for(j_uplife in 1:(nuplife-1)) {
+#     b_uplife[j_uplife] ~ dnorm(0, 0.001)
+#   }
+#   b_uplife[nuplife] <- -sum(b_uplife[1:(nuplife-1)])
+# 
+#   tau <- pow(sig, -2)
+#   sig ~ dunif(0, 10)
+#   b0 ~ dnorm(0, 0.001)
+# }', file=dist_jags)
+# 
+# 
+# # bundle data to pass into JAGS
+# dist_data <- list(lengthcut=as.numeric(as.factor(lengthcut[!is.na(y) & !is.na(lengthcut)])),
+#                   # upriver_lifehist=as.numeric(as.factor(paste(uprivercut, life_hist)[!is.na(y) & !is.na(lengthcut)])),
+#                   # upriver_lifehist=as.numeric(as.factor(paste(life_hist, uprivercut)[!is.na(y) & !is.na(lengthcut)])),
+#                   upriver_lifehist=as.numeric(as.factor(paste(life_hist, sectionmode)[!is.na(y) & !is.na(lengthcut)])),
+#                   y=y[!is.na(y) & !is.na(lengthcut)])
+# # dist_data$lengthcut <- as.numeric(as.factor(dist_data$lengthcut_raw))
+# dist_data$nlength <- length(unique(dist_data$lengthcut))
+# # dist_data$upriver_lifehist <- as.numeric(as.factor(dist_data$upriver_lifehist_raw))
+# dist_data$nuplife <- length(unique(dist_data$upriver_lifehist))
+# dist_data$n <- length(dist_data$y)
+# 
+# # JAGS controls
+# niter <- 10000
+# # ncores <- 3
+# ncores <- min(10, parallel::detectCores()-1)
+# 
+# {  ## running JAGS
+#   tstart <- Sys.time()
+#   print(tstart)
+#   dist_jags_out <- jagsUI::jags(model.file=dist_jags, data=dist_data,
+#                                 parameters.to.save=c("b0","b_length","b_uplife","sig"),
+#                                 n.chains=ncores, parallel=T, n.iter=niter,
+#                                 n.burnin=niter/2, n.thin=niter/2000)
+#   print(Sys.time() - tstart)
+# }
+# ## a few JAGS diagnostic plots
+# # nbyname(dist_jags_out)
+# # plotRhats(dist_jags_out)
+# # traceworstRhat(dist_jags_out)
+# 
+# ## pulling out data.frames associated with posteriors of length & life history/position effects
+# b_length <- jags_df(dist_jags_out, p="b_length")
+# b_uplife <- jags_df(dist_jags_out, p="b_uplife")
+# 
+# 
+# ## Plotting effect sizes!!
+# 
+# par(mar=c(10.1, 4.1, 2.1, 2.1))  ## tweaking margins so plots below will work
+# 
+# par(mfrow=c(2,2))
+# caterpillar(b_length, xax=rep("",4), main="Effect sizes for length category")
+# axis(1, 1:4, label=levels(as.factor(lengthcut)), las=2)
+# abline(h=0, lty=3)
+# caterpillar(b_uplife, xax=rep("",ncol(b_uplife)), main="Effect sizes for section mode & life history")
+# # axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,uprivercut))), las=2)
+# axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,sectionmode))), las=2)
+# abline(h=0, lty=3)
+# caterpillar(exp(b_length), xax=rep("",4), 
+#             main="Exponentiated effect sizes for length category",
+#             ylab="Multiplicative change from baseline")
+# axis(1, 1:4, label=levels(as.factor(lengthcut)), las=2)
+# abline(h=1, lty=3)
+# caterpillar(exp(b_uplife), xax=rep("",ncol(b_uplife)), 
+#             main="Exponentiated effect sizes for section mode & life history",
+#             ylab="Multiplicative change from baseline")
+# # axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,uprivercut))), las=2)
+# axis(1, 1:ncol(b_uplife), label=levels(as.factor(paste(life_hist,sectionmode))), las=2)
+# abline(h=1, lty=3)
+# 
+# ## Looking at how much of the effect size posteriors are above/below zero
+# ## This can be taken as evidence of which effects are different from zero 
+# colMeans(b_length>0)
+# colMeans(b_uplife>0)
+# 
+# ## can interpret these as p-values(ish)
+# sapply(colMeans(b_length>0), function(x) 2*min(x,1-x))
+# sapply(colMeans(b_uplife>0), function(x) 2*min(x,1-x))
 
 
 ## Boxplots of raw data, broken out by factors identified by the model
@@ -1876,153 +1921,153 @@ legend("bottomright", legend=c("p raw", "p adjusted"), pch=c(1,16))
 
 
 
-## Bayesian survival model - next version
-## THIS IS NOT THE FINAL VERSION USED IN THE REPORT
-## 
-## Investigating whether individual-level variables (size, life history, section)
-## affect survival probability, globally (not looking at interactions!!)
-
-## this is just a list of variables
-# tagging_loc <- telem3d$tagging_location[,1]
-# # avgupriver
-# # uprivercut
-# # sectionmode
+# ## Bayesian survival model - next version
+# ## THIS IS NOT THE FINAL VERSION USED IN THE REPORT
+# ## 
+# ## Investigating whether individual-level variables (size, life history, section)
+# ## affect survival probability, globally (not looking at interactions!!)
 # 
-# tagging_hab <- telem3d$tagging_habitat[,1]
-# tagging_hab[tagging_hab=="lake"] <- "tributary"
+# ## this is just a list of variables
+# # tagging_loc <- telem3d$tagging_location[,1]
+# # # avgupriver
+# # # uprivercut
+# # # sectionmode
+# # 
+# # tagging_hab <- telem3d$tagging_habitat[,1]
+# # tagging_hab[tagging_hab=="lake"] <- "tributary"
+# # 
+# # life_hist <- telem3d$life_history[,1]
+# # life_hist[life_hist=="lake"] <- "tributary"
+# # 
+# # total_length <- telem3d$total_length[,1]
+# # # lengthcut
 # 
-# life_hist <- telem3d$life_history[,1]
-# life_hist[life_hist=="lake"] <- "tributary"
+# # skeleton("surv")
+# # specify model
+# surv_vbls_jags <- tempfile()
+# cat('model {
+#   for(i in 1:n) {  
+#     for(j in firstpresent[i]:firstdead[i]) {          # for each survey
+#       # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
+#       survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
+#       logit(p[i,j]) <- b0[j-1] 
+#       # + b_section[sectionmode[i]] 
+#       # + b_life[life_hist[i]] 
+#       # + b_length[lengthcut[i]] 
+#     }
+#   }
+#   
+#   for(j in 1:np) {
+#     b0[j] ~ dnorm(0, 0.1)
+#   }
+#   
+#   for(i_section in 1:(n_section-1)) {
+#     b_section[i_section] ~ dnorm(0, 0.1)
+#   }
+#   b_section[n_section] <- -sum(b_section[1:(n_section-1)])
+#   
+#   for(i_life in 1:(n_life-1)) {
+#     b_life[i_life] ~ dnorm(0, 0.1)
+#   }
+#   b_life[n_life] <- -sum(b_life[1:(n_life-1)])
+#   
+#   for(i_length in 1:(n_length-1)) {
+#     b_length[i_length] ~ dnorm(0, 0.1)
+#   }
+#   b_length[n_length] <- -sum(b_length[2:(n_length-1)])
+# }', file=surv_vbls_jags)
 # 
-# total_length <- telem3d$total_length[,1]
-# # lengthcut
-
-# skeleton("surv")
-# specify model
-surv_vbls_jags <- tempfile()
-cat('model {
-  for(i in 1:n) {  
-    for(j in firstpresent[i]:firstdead[i]) {          # for each survey
-      # survtable[i,j] ~ dbin(p[j-1], survtable[i,j-1])   # for each event present  
-      survtable[i,j] ~ dbin(p[i,j], survtable[i,j-1])
-      logit(p[i,j]) <- b0[j-1] 
-      # + b_section[sectionmode[i]] 
-      # + b_life[life_hist[i]] 
-      # + b_length[lengthcut[i]] 
-    }
-  }
-  
-  for(j in 1:np) {
-    b0[j] ~ dnorm(0, 0.1)
-  }
-  
-  for(i_section in 1:(n_section-1)) {
-    b_section[i_section] ~ dnorm(0, 0.1)
-  }
-  b_section[n_section] <- -sum(b_section[1:(n_section-1)])
-  
-  for(i_life in 1:(n_life-1)) {
-    b_life[i_life] ~ dnorm(0, 0.1)
-  }
-  b_life[n_life] <- -sum(b_life[1:(n_life-1)])
-  
-  for(i_length in 1:(n_length-1)) {
-    b_length[i_length] ~ dnorm(0, 0.1)
-  }
-  b_length[n_length] <- -sum(b_length[2:(n_length-1)])
-}', file=surv_vbls_jags)
-
-# bundle data to pass into JAGS
-surv_vbls_data <- list(survtable=survtable,  
-                  firstdead=firstdead,
-                  firstpresent=firstpresent,
-                  n=nrow(survtable),
-                  np=ncol(survtable)-1,
-                  sectionmode=as.numeric(as.factor(sectionmode)),
-                  n_section=length(unique(sectionmode)),
-                  # sectionmode=as.numeric(as.factor(paste(life_hist, sectionmode))),
-                  # n_section=length(unique(paste(life_hist, sectionmode))),
-                  life_hist=as.numeric(as.factor(life_hist)),
-                  n_life=length(unique(life_hist)),
-                  lengthcut=as.numeric(as.factor(lengthcut)),
-                  n_length=length(levels(lengthcut)))
-surv_vbls_data$survtable <- surv_vbls_data$survtable[!is.na(lengthcut),]
-surv_vbls_data$firstdead <- surv_vbls_data$firstdead[!is.na(lengthcut)]
-surv_vbls_data$firstpresent <- surv_vbls_data$firstpresent[!is.na(lengthcut)]
-surv_vbls_data$sectionmode <- surv_vbls_data$sectionmode[!is.na(lengthcut)]
-surv_vbls_data$life_hist <- surv_vbls_data$life_hist[!is.na(lengthcut)]
-surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
-surv_vbls_data$n <- sum(!is.na(lengthcut))
-
-# JAGS controls
-niter <- 100*1000  # 100k takes 4.3 min
-ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
-
-{
-  tstart <- Sys.time()
-  print(tstart)
-  surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
-                                parameters.to.save=c("p","b0","b_section","b_life","b_length"), #"survtable",
-                                n.chains=ncores, parallel=T, n.iter=niter,
-                                n.burnin=niter/2, n.thin=niter/2000)
-  print(Sys.time() - tstart)
-}
-
-# checking output & assessing convergence 
-nbyname(surv_vbls_jags_out)     # how many parameters are returned
-par(mfrow=c(2,2))
-plotRhats(surv_vbls_jags_out)   # plotting Rhat for each parameter: near 1 is good
-traceworstRhat(surv_vbls_jags_out)  # trace plots for worst parameters
-
-par(mfrow=c(4,4))
-tracedens_jags(surv_vbls_jags_out, p="b0")
-
-par(mfrow=c(2,2))
-caterpillar(surv_vbls_jags_out, p="b0")
-abline(h=0, lty=3)
-caterpillar(surv_vbls_jags_out, p="b_section")
-abline(h=0, lty=3)
-caterpillar(surv_vbls_jags_out, p="b_life")
-abline(h=0, lty=3)
-caterpillar(surv_vbls_jags_out, p="b_length")
-abline(h=0, lty=3)
-
-par(mfrow=c(2,2))
-caterpillar(expit(surv_vbls_jags_out$sims.list$b0))
-abline(h=0:1, lty=3)
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_section))
-abline(h=0:1, lty=3)
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_life))
-abline(h=0:1, lty=3)
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_length))
-abline(h=0:1, lty=3)
-
-## comparing DIC scores - it seems separating by section is better.  Weird!!
-surv_jags_out$DIC         # 1623.812
-survsection_jags_out$DIC  # 1263.714
-surv_vbls_jags_out$DIC    # 1523.894, 1535.742 without length, 1563.367 with life x section interaction
-# try running THIS model all the ways, REMOVING NA VALUES IN LENGTH:
-# - taking out all explanatory variables              DIC = 1589.783 at 500k reps
-# - life hist + section as main effects               DIC = 1524.214 at 500k reps
-# - life hist + section as main effects, plus length  DIC = 1547.579 at 500k reps
-# - life hist x section as interaction                DIC = 1539.344 at 500k reps
-# - life hist x section as interaction, plus length   DIC = 1563.367 at 500k reps
-
-
-
-# plotting survival & survival probability
-par(mfrow=c(1,1))
-par(mar=c(6.1, 4.1, 4.1, 2.1))
-plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
-     xlab="", ylab="Survival Probability", xaxt="n")
-for(i in 1:nrow(survtable)) {
-  jmeans <- surv_vbls_jags_out$mean$survtable[i,] + runif(ncol(surv_vbls_jags_out$mean$survtable), -0.01, 0.01)
-  jdates <- 1:ncol(surv_vbls_jags_out$mean$survtable) + runif(ncol(surv_vbls_jags_out$mean$survtable), -0.05, 0.05)
-  lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
-  points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
-}
-axis(side=1, at=1:length(plotdates), plotdates, las=2)
-par(mar=parmar)
+# # bundle data to pass into JAGS
+# surv_vbls_data <- list(survtable=survtable,  
+#                   firstdead=firstdead,
+#                   firstpresent=firstpresent,
+#                   n=nrow(survtable),
+#                   np=ncol(survtable)-1,
+#                   sectionmode=as.numeric(as.factor(sectionmode)),
+#                   n_section=length(unique(sectionmode)),
+#                   # sectionmode=as.numeric(as.factor(paste(life_hist, sectionmode))),
+#                   # n_section=length(unique(paste(life_hist, sectionmode))),
+#                   life_hist=as.numeric(as.factor(life_hist)),
+#                   n_life=length(unique(life_hist)),
+#                   lengthcut=as.numeric(as.factor(lengthcut)),
+#                   n_length=length(levels(lengthcut)))
+# surv_vbls_data$survtable <- surv_vbls_data$survtable[!is.na(lengthcut),]
+# surv_vbls_data$firstdead <- surv_vbls_data$firstdead[!is.na(lengthcut)]
+# surv_vbls_data$firstpresent <- surv_vbls_data$firstpresent[!is.na(lengthcut)]
+# surv_vbls_data$sectionmode <- surv_vbls_data$sectionmode[!is.na(lengthcut)]
+# surv_vbls_data$life_hist <- surv_vbls_data$life_hist[!is.na(lengthcut)]
+# surv_vbls_data$lengthcut <- surv_vbls_data$lengthcut[!is.na(lengthcut)]
+# surv_vbls_data$n <- sum(!is.na(lengthcut))
+# 
+# # JAGS controls
+# niter <- 100*1000  # 100k takes 4.3 min
+# ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+# 
+# {
+#   tstart <- Sys.time()
+#   print(tstart)
+#   surv_vbls_jags_out <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data,
+#                                 parameters.to.save=c("p","b0","b_section","b_life","b_length"), #"survtable",
+#                                 n.chains=ncores, parallel=T, n.iter=niter,
+#                                 n.burnin=niter/2, n.thin=niter/2000)
+#   print(Sys.time() - tstart)
+# }
+# 
+# # checking output & assessing convergence 
+# nbyname(surv_vbls_jags_out)     # how many parameters are returned
+# par(mfrow=c(2,2))
+# plotRhats(surv_vbls_jags_out)   # plotting Rhat for each parameter: near 1 is good
+# traceworstRhat(surv_vbls_jags_out)  # trace plots for worst parameters
+# 
+# par(mfrow=c(4,4))
+# tracedens_jags(surv_vbls_jags_out, p="b0")
+# 
+# par(mfrow=c(2,2))
+# caterpillar(surv_vbls_jags_out, p="b0")
+# abline(h=0, lty=3)
+# caterpillar(surv_vbls_jags_out, p="b_section")
+# abline(h=0, lty=3)
+# caterpillar(surv_vbls_jags_out, p="b_life")
+# abline(h=0, lty=3)
+# caterpillar(surv_vbls_jags_out, p="b_length")
+# abline(h=0, lty=3)
+# 
+# par(mfrow=c(2,2))
+# caterpillar(expit(surv_vbls_jags_out$sims.list$b0))
+# abline(h=0:1, lty=3)
+# caterpillar(exp(surv_vbls_jags_out$sims.list$b_section))
+# abline(h=0:1, lty=3)
+# caterpillar(exp(surv_vbls_jags_out$sims.list$b_life))
+# abline(h=0:1, lty=3)
+# caterpillar(exp(surv_vbls_jags_out$sims.list$b_length))
+# abline(h=0:1, lty=3)
+# 
+# ## comparing DIC scores - it seems separating by section is better.  Weird!!
+# surv_jags_out$DIC         # 1623.812
+# survsection_jags_out$DIC  # 1263.714
+# surv_vbls_jags_out$DIC    # 1523.894, 1535.742 without length, 1563.367 with life x section interaction
+# # try running THIS model all the ways, REMOVING NA VALUES IN LENGTH:
+# # - taking out all explanatory variables              DIC = 1589.783 at 500k reps
+# # - life hist + section as main effects               DIC = 1524.214 at 500k reps
+# # - life hist + section as main effects, plus length  DIC = 1547.579 at 500k reps
+# # - life hist x section as interaction                DIC = 1539.344 at 500k reps
+# # - life hist x section as interaction, plus length   DIC = 1563.367 at 500k reps
+# 
+# 
+# 
+# # plotting survival & survival probability
+# par(mfrow=c(1,1))
+# par(mar=c(6.1, 4.1, 4.1, 2.1))
+# plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+#      xlab="", ylab="Survival Probability", xaxt="n")
+# for(i in 1:nrow(survtable)) {
+#   jmeans <- surv_vbls_jags_out$mean$survtable[i,] + runif(ncol(surv_vbls_jags_out$mean$survtable), -0.01, 0.01)
+#   jdates <- 1:ncol(surv_vbls_jags_out$mean$survtable) + runif(ncol(surv_vbls_jags_out$mean$survtable), -0.05, 0.05)
+#   lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+#   points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+# }
+# axis(side=1, at=1:length(plotdates), plotdates, las=2)
+# par(mar=parmar)
 
 
 ### TRYING A MORE STRUCTURED APPROACH TO MODEL SELECTION
@@ -2643,7 +2688,7 @@ surv_vbls_data <- list(X=survtable,           # renamed for consistency
 # surv_vbls_data$n <- sum(!is.na(lengthcut))
 
 # JAGS controls
-niter <- 50*1000  # 100k takes 4.3 min  - now takes 1 minute and change
+niter <- 25*1000*1000  # 500k takes 12 min  on office machine, 5k in two hours
 ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
 
 ## Model 4: baseline + section x life 
@@ -2679,7 +2724,13 @@ cat('model {
                                      n.burnin=niter/2, n.thin=niter/2000)
   print(Sys.time() - tstart)
 }
+# save(surv_vbls_jags_out, file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/surv_vbls_jags_out5000k.Rdata")
+# load(file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/surv_vbls_jags_out5000k.Rdata")
 
+# save(surv_vbls_jags_out, file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/surv_vbls_jags_out25000k.Rdata")
+# load(file="C:/Users/mbtyers/Documents/Current Projects/TananaBurbot/surv_vbls_jags_out25000k.Rdata")
+
+niter/2000
 
 ## MODEL DIAGNOSTICS ONE MORE TIME
 
@@ -2689,33 +2740,14 @@ par(mfrow=c(2,2))
 plotRhats(surv_vbls_jags_out)   # plotting Rhat for each parameter: near 1 is good
 traceworstRhat(surv_vbls_jags_out)  # trace plots for worst parameters
 
-par(mfrow=c(4,4))
+par(mfrow=c(3,3))
 tracedens_jags(surv_vbls_jags_out, p="gamma")
-
-par(mfrow=c(2,2))
-caterpillar(surv_vbls_jags_out, p="gamma")
-abline(h=0, lty=3)
-caterpillar(surv_vbls_jags_out, p="tau")
-abline(h=0, lty=3)
-
-#### --- STILL NEED TO LABEL X AXES FOR THESE PLOTS
-#### --- would also like to create some tables from these
-caterpillar(expit(surv_vbls_jags_out$sims.list$gamma), main="expit(gamma) - Baseline Probabilities")
-abline(h=0:1, lty=3)
-caterpillar(exp(surv_vbls_jags_out$sims.list$tau), main="exp(tau) - Multiplicative Effects")
-abline(h=0:1, lty=3)
-
-par(mfrow=c(2,2))
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_life))
-abline(h=0:1, lty=3)
-caterpillar(exp(surv_vbls_jags_out$sims.list$b_length))
-abline(h=0:1, lty=3)
 
 
 ## calculating predictive accuracy of final model
 X_pp <- surv_vbls_jags_out$sims.list$X_pp
-  # head(apply(!is.na(X_pp), 2:3, mean))
-  # head(surv_vbls_data$X)
+# head(apply(!is.na(X_pp), 2:3, mean))
+# head(surv_vbls_data$X)
 gotitright <- matrix(NA, nrow=nrow(surv_vbls_data$X), ncol=ncol(surv_vbls_data$X))
 for(i in 1:nrow(gotitright)) {
   for(j in 1:ncol(gotitright)) {
@@ -2737,101 +2769,269 @@ mean(gotitright, na.rm=T)
 tapply(as.numeric(gotitright), as.numeric(surv_vbls_data$X), mean, na.rm=T)
 
 
-## Trying k-fold cross validation:
-## Leaving out a proportion of the data (starting with 10%) and assessing
-## predictive accuracy of the model.
 
-## creating new input data, with a random sample of values left out of 
-## the survival matrix X.  These will need to be values between 
-## firstpresent[i,] and firstdead[i,] of a given row of data
-surv_vbls_data_kfold <- surv_vbls_data
 
-## create vectors of row/column pairs for testable data
-rowstosample <- columnstosample <- NA
-k <- 1  # index for sample vectors (will be appended)
-for(i in 1:nrow(surv_vbls_data$X)) {  # individual
-  for(j in surv_vbls_data$firstpresent[i]:surv_vbls_data$firstdead[i]) { # sampling event
-    # rowstosample[k] <- i    # could also add !is.na condition
-    # columnstosample[k] <- j
-    # k <- k+1
-    # this does not work.  Conditions that will:
-    # !is.na(X[i,j]) and
-    # X[i,j+1] is NA
-    # or firstdead[i] (alternatively, X[i,j]==0)
-    # or X[i,j+1]==0
-    if(!is.na(surv_vbls_data$X[i,j])) {
-      thisone <- (surv_vbls_data$X[i,j]==0)
-      if(j < ncol(surv_vbls_data$X)) {
-        if(surv_vbls_data$X[i,j+1]==0 | is.na(surv_vbls_data$X[i,j+1])) {
-          thisone <- T
-        }
-      }
-      if(thisone) {
-        rowstosample[k] <- i    
-        columnstosample[k] <- j
-        k <- k+1
-      }
-    }
-  }
+### posterior plots
+
+par(mfrow=c(2,2))
+caterpillar(surv_vbls_jags_out, p="gamma")
+abline(h=0, lty=3)
+caterpillar(surv_vbls_jags_out, p="tau")
+abline(h=0, lty=3)
+
+
+caterpillar(expit(surv_vbls_jags_out$sims.list$gamma), main="expit(gamma) - Baseline Probabilities")
+abline(h=0:1, lty=3)
+caterpillar(exp(surv_vbls_jags_out$sims.list$tau), main="exp(tau) - Multiplicative Effects")
+abline(h=0:1, lty=3)
+
+
+
+
+## plot 50 & 95% credible intervals for each baseline survival parameter
+par(mfrow=c(1,1))
+parmar <- par("mar")  # storing original margin settings
+par(mar=c(6.1, 4.1, 4.1, 2.1))
+caterpillar(surv_vbls_jags_out, p="gamma", xax=rep("", surv_vbls_data$np))  # 50 & 95% credible intervals for each p!
+mnDates1 <- as.character(mnDates)
+plotdates <- c("Capture 1", mnDates1[2:3],"Capture 2", mnDates1[4:5],"Capture 3",mnDates1[6:length(mnDates)])
+axis(side=1, at=0:surv_vbls_data$np, plotdates, las=2)
+
+caterpillar(expit(surv_vbls_jags_out$sims.list$gamma), 
+            # main="expit(gamma) - Baseline Probabilities",
+            main="",
+            xax=rep("", surv_vbls_data$np))
+axis(side=1, at=0:surv_vbls_data$np, plotdates, las=2)
+abline(h=0:1, lty=3)
+
+lifesectionlevels <- levels(as.factor(paste(life_hist, sectionmode)))
+caterpillar(surv_vbls_jags_out, p="tau", xax=rep("",6))
+axis(side=1, at=1:6, lifesectionlevels, las=2)
+abline(h=0, lty=3)
+
+par(mar=c(8.1, 4.1, 4.1, 2.1))
+caterpillar(exp(surv_vbls_jags_out$sims.list$tau), 
+            # main="exp(tau) - Multiplicative Effects", 
+            main="",
+            xax=rep("",6))
+axis(side=1, at=1:6, lifesectionlevels, las=2)
+abline(h=0:1, lty=3)
+
+
+## plotting survival & survival probability for all individuals
+## 0=dead, 1=alive, somewhere in between represents PROBABILITY of survival!
+## note: points/lines are jittered slightly for better visibility
+par(mfrow=c(1,1))
+par(mar=c(6.1, 4.1, 4.1, 2.1))
+plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+     xlab="", ylab="Survival Probability", xaxt="n")
+for(i in 1:nrow(survtable)) {
+  jmeans <- surv_vbls_jags_out$mean$X[i,] + runif(ncol(surv_vbls_jags_out$mean$X), -0.01, 0.01)
+  jdates <- 1:ncol(surv_vbls_jags_out$mean$X) + runif(ncol(surv_vbls_jags_out$mean$X), -0.05, 0.05)
+  lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+  points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
 }
-length(rowstosample)   # 399 to sample from
+axis(side=1, at=1:length(plotdates), plotdates, las=2)
+par(mar=parmar)
 
-psample <- 0.2  # proportion to censor for cross-validation
-nsample <- round(psample*length(rowstosample))  # 80
 
-# taking a sample and censoring data
-thesample <- sample(1:length(rowstosample), nsample)  
-for(i in 1:length(thesample)) {
-  surv_vbls_data_kfold$X[rowstosample[thesample[i]], columnstosample[thesample[i]]] <- NA
-}
+## plotting them again for each habitat x river section, for the purpose of exploration
 
-# JAGS controls
-niter <- 50*1000  # 100k takes 4.3 min  - now takes 1 minute and change
-ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
-{
-  tstart <- Sys.time()
-  print(tstart)
-  surv_vbls_jags_out_kfold <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data_kfold,
-                                     parameters.to.save=c("p","gamma","tau","X","X_pp"),
-                                     n.chains=ncores, parallel=T, n.iter=niter,
-                                     n.burnin=niter/2, n.thin=niter/2000)
-  print(Sys.time() - tstart)
-}
-
-## inelegant loop to populate a vector of cv predictive accuracy
-mn_kfold <- NA
-true_kfold <- NA
-condition <- NA
-for(i in 1:length(thesample)) {
-  true_kfold[i] <- surv_vbls_data$X[rowstosample[thesample[i]], 
-                                    columnstosample[thesample[i]]]
-  mn_kfold[i] <- mean(surv_vbls_jags_out_kfold$sims.list$X[, rowstosample[thesample[i]], 
-                                                                   columnstosample[thesample[i]]])
-  if(true_kfold[i]==0) condition[i] <- 1
-  if(columnstosample[thesample[i]] < ncol(surv_vbls_data$X)) {
-    ### here i am
-    if(is.na(surv_vbls_data$X[rowstosample[thesample[i]], 1+columnstosample[thesample[i]]])) {
-      condition[i] <- 3
-    } else {
-    if(surv_vbls_data$X[rowstosample[thesample[i]], 1+columnstosample[thesample[i]]]==0) {
-      condition[i] <- 2
-    }}
-  }
-}
-plot(mn_kfold ~ true_kfold)
-table(true_kfold)
-table(condition)
-
-# if(!is.na(surv_vbls_data$X[i,j])) {
-#   thisone <- (surv_vbls_data$X[i,j]==0)
-#   if(j < ncol(surv_vbls_data$X)) {
-#     if(surv_vbls_data$X[i,j+1]==0 | is.na(surv_vbls_data$X[i,j+1])) {
-#       thisone <- T
-#     }
-#   }
-#   if(thisone) {
-#     rowstosample[k] <- i    
-#     columnstosample[k] <- j
-#     k <- k+1
+# par(mfrow=c(3,2))
+# for(j in 1:6) {
+#   plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+#        xlab="", ylab="Survival Probability",
+#        main=paste0(lifesectionlevels[j], " (n =", sum(surv_vbls_data$z==j), ") ",
+#                    "median exp(tau) = ", round(exp(surv_vbls_jags_out$q50$tau[j]), 2)))
+#   for(i in (1:nrow(survtable))[surv_vbls_data$z==j]) {
+#     jmeans <- surv_vbls_jags_out$mean$X[i,] + runif(ncol(surv_vbls_jags_out$mean$X), -0.01, 0.01)
+#     jdates <- 1:ncol(surv_vbls_jags_out$mean$X) + runif(ncol(surv_vbls_jags_out$mean$X), -0.05, 0.05)
+#     lines(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
+#     points(jdates, jmeans, col=adjustcolor(1, alpha.f = .4))
 #   }
 # }
+# 
+# # par(mfrow=c(1,1))
+# # plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+# #      xlab="", ylab="Survival Proportion")
+# # for(j in 1:6) {
+# #   est <- colMeans(survtable[surv_vbls_data$z==j,], na.rm=T)
+# #   # cilo <- qbeta(.025, 0.5+colSums(survtable[surv_vbls_data$z==j,]==1, na.rm=T), 
+# #   #               0.5+colSums(survtable[surv_vbls_data$z==j,]==0, na.rm=T))
+# #   # cihi <- qbeta(.975, 0.5+colSums(survtable[surv_vbls_data$z==j,]==1, na.rm=T), 
+# #   #               0.5+colSums(survtable[surv_vbls_data$z==j,]==0, na.rm=T))
+# #   lines(est, col=j, lwd=2)
+# #   # lines(cilo, col=j, lwd=1)
+# #   # lines(cihi, col=j, lwd=1)
+# # }
+# 
+# par(mfrow=c(3,2))
+# for(j in 1:6) {
+#   plot(NA, xlim=c(1,ncol(survtable)), ylim=0:1,
+#      xlab="", ylab="Survival Proportion",
+#      main=paste0(lifesectionlevels[j], " (n =", sum(surv_vbls_data$z==j), ") ",
+#          "median exp(tau) = ", round(exp(surv_vbls_jags_out$q50$tau[j]), 2)))
+#   est <- colMeans(survtable[surv_vbls_data$z==j,], na.rm=T)
+#   cilo <- qbeta(.025, 0.5+colSums(survtable[surv_vbls_data$z==j,]==1, na.rm=T), 
+#                 0.5+colSums(survtable[surv_vbls_data$z==j,]==0, na.rm=T))
+#   cihi <- qbeta(.975, 0.5+colSums(survtable[surv_vbls_data$z==j,]==1, na.rm=T), 
+#                 0.5+colSums(survtable[surv_vbls_data$z==j,]==0, na.rm=T))
+#   lines(est, col=j, lwd=2)
+#   lines(cilo, col=j, lwd=1)
+#   lines(cihi, col=j, lwd=1)
+# }
+
+
+par(mfrow=c(3,2))
+par(mar=c(5.1, 4.1, 3.1, 2.1))
+for(j in 1:6) {
+  plot(NA, xlim=c(1,ncol(survtable)), ylim=c(-.2, 1.2),
+       xlab="Survey or Capture Event", ylab="Survival Probability",
+       xaxt="n",yaxt="n",
+       main=c(paste0(lifesectionlevels[j], " (n = ", sum(surv_vbls_data$z==j), ")"),
+              paste0("median exp(tau) = ", round(exp(surv_vbls_jags_out$q50$tau[j]), 2))))
+  axis(side=1,at=1:ncol(survtable),labels=rep("",ncol(survtable)))
+  axis(side=2,at=seq(0,1,by=0.2), las=2)
+  for(i in (1:nrow(survtable))[surv_vbls_data$z==j]) {
+    jmeans <- surv_vbls_jags_out$mean$X[i,] + runif(ncol(surv_vbls_jags_out$mean$X), -0.01, 0.01)
+    jdates <- 1:ncol(surv_vbls_jags_out$mean$X) + runif(ncol(surv_vbls_jags_out$mean$X), -0.05, 0.05)
+    lines(jdates, jmeans, col=adjustcolor(4, alpha.f = .4))
+    points(jdates, jmeans, col=adjustcolor(4, alpha.f = .4))
+  }
+  text(x=1:nrow(survtable), y=rep(0, nrow(survtable)), 
+       labels=colSums(survtable[surv_vbls_data$z==j,]==0, na.rm=T), pos=1)
+  text(x=1:nrow(survtable), y=rep(1, nrow(survtable)), 
+       labels=colSums(survtable[surv_vbls_data$z==j,]==1, na.rm=T), pos=3)
+  # lines(colMeans(survtable[surv_vbls_data$z==j,], na.rm=T), lty=2, lwd=2)
+  lines(colMeans(surv_vbls_jags_out$mean$X[surv_vbls_data$z==j,], na.rm=T), lty=2, lwd=2)
+  abline(h=0:1, lty=3)
+}
+
+## print the survival matrix one more time
+survtable1 <- survtable
+colnames(survtable1) <- plotdates
+kable(survtable1)
+# write.csv(survtable1, file="tables/xxx3.csv")
+
+
+## making a table of survival parameters & CI's
+pp <- expit(surv_vbls_jags_out$sims.list$gamma)
+pmed <- apply(pp, 2, median) #surv_jags_out$q50$p
+pse <- apply(pp, 2, sd) #surv_jags_out$sd$p
+plo <- apply(pp, 2, quantile, p=0.025) #surv_jags_out$q2.5$p
+phi <- apply(pp, 2, quantile, p=0.975) #surv_jags_out$q97.5$p
+ndigits <- 3
+ci95 <- paste0("(",round(plo, ndigits)," - ", round(phi, ndigits),")")
+ptable <- data.frame(Estimate=round(pmed, ndigits),
+                     SE=round(pse, ndigits),
+                     CI95=ci95)
+rownames(ptable) <- plotdates[-1]
+ptable   # print to console
+knitr::kable(ptable)  # print to markdown
+# write.csv(ptable, file="tables/xxx4.csv")
+
+## making a table of habitat offsets
+tt <- exp(surv_vbls_jags_out$sims.list$tau)
+pmed <- apply(tt, 2, median) #surv_jags_out$q50$p
+pse <- apply(tt, 2, sd) #surv_jags_out$sd$p
+plo <- apply(tt, 2, quantile, p=0.025) #surv_jags_out$q2.5$p
+phi <- apply(tt, 2, quantile, p=0.975) #surv_jags_out$q97.5$p
+ndigits <- 3
+ci95 <- paste0("(",round(plo, ndigits)," - ", round(phi, ndigits),")")
+ptable <- data.frame(Estimate=round(pmed, ndigits),
+                     SE=round(pse, ndigits),
+                     CI95=ci95)
+rownames(ptable) <- lifesectionlevels
+ptable   # print to console
+knitr::kable(ptable)  # print to markdown
+# write.csv(ptable, file="tables/xxx5.csv")
+
+
+
+
+
+# ## Trying k-fold cross validation:
+# ## Leaving out a proportion of the data (starting with 80%) and assessing
+# ## predictive accuracy of the model.
+# 
+# ## FOLLOWUP: I DON'T THINK THIS WORKED
+# 
+# ## creating new input data, with a random sample of values left out of 
+# ## the survival matrix X.  These will need to be values between 
+# ## firstpresent[i,] and firstdead[i,] of a given row of data
+# surv_vbls_data_kfold <- surv_vbls_data
+# 
+# ## create vectors of row/column pairs for testable data
+# rowstosample <- columnstosample <- NA
+# k <- 1  # index for sample vectors (will be appended)
+# for(i in 1:nrow(surv_vbls_data$X)) {  # individual
+#   for(j in surv_vbls_data$firstpresent[i]:surv_vbls_data$firstdead[i]) { # sampling event
+#     # !is.na(X[i,j]) and
+#     # X[i,j+1] is NA
+#     # or firstdead[i] (alternatively, X[i,j]==0)
+#     # or X[i,j+1]==0
+#     if(!is.na(surv_vbls_data$X[i,j])) {
+#       thisone <- (surv_vbls_data$X[i,j]==0)
+#       if(j < ncol(surv_vbls_data$X)) {
+#         if(surv_vbls_data$X[i,j+1]==0 | is.na(surv_vbls_data$X[i,j+1])) {
+#           thisone <- T
+#         }
+#       }
+#       if(thisone) {
+#         rowstosample[k] <- i    
+#         columnstosample[k] <- j
+#         k <- k+1
+#       }
+#     }
+#   }
+# }
+# length(rowstosample)   # 399 to sample from
+# 
+# psample <- 0.2  # proportion to censor for cross-validation
+# nsample <- round(psample*length(rowstosample))  # 80
+# 
+# # taking a sample and censoring data
+# thesample <- sample(1:length(rowstosample), nsample)  
+# for(i in 1:length(thesample)) {
+#   surv_vbls_data_kfold$X[rowstosample[thesample[i]], columnstosample[thesample[i]]] <- NA
+# }
+# 
+# # JAGS controls
+# niter <- 50*1000  # 100k takes 4.3 min  - now takes 1 minute and change
+# ncores <- min(10, parallel::detectCores()-1)  # number of cores to use
+# {
+#   tstart <- Sys.time()
+#   print(tstart)
+#   surv_vbls_jags_out_kfold <- jagsUI::jags(model.file=surv_vbls_jags, data=surv_vbls_data_kfold,
+#                                      parameters.to.save=c("p","gamma","tau","X","X_pp"),
+#                                      n.chains=ncores, parallel=T, n.iter=niter,
+#                                      n.burnin=niter/2, n.thin=niter/2000)
+#   print(Sys.time() - tstart)
+# }
+# 
+# ## inelegant loop to populate a vector of cross validation predictive accuracy
+# mn_kfold <- NA
+# true_kfold <- NA
+# condition <- NA
+# for(i in 1:length(thesample)) {
+#   true_kfold[i] <- surv_vbls_data$X[rowstosample[thesample[i]], 
+#                                     columnstosample[thesample[i]]]
+#   mn_kfold[i] <- mean(surv_vbls_jags_out_kfold$sims.list$X[, rowstosample[thesample[i]], 
+#                                                                    columnstosample[thesample[i]]])
+#   if(true_kfold[i]==0) condition[i] <- 1
+#   if(columnstosample[thesample[i]] < ncol(surv_vbls_data$X)) {
+#     ### here i am
+#     if(is.na(surv_vbls_data$X[rowstosample[thesample[i]], 1+columnstosample[thesample[i]]])) {
+#       condition[i] <- 3
+#     } else {
+#     if(surv_vbls_data$X[rowstosample[thesample[i]], 1+columnstosample[thesample[i]]]==0) {
+#       condition[i] <- 2
+#     }}
+#   }
+# }
+# plot(mn_kfold ~ true_kfold, col=condition)
+# table(true_kfold)
+# table(condition)
+# 
+# tapply(mn_kfold, true_kfold, mean)
+# tapply(mn_kfold, condition, mean)
