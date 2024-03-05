@@ -14,6 +14,8 @@ library(jagsUI)      # for running Bayesian survival analysis
 library(jagshelper)  # for plotting & model diagnostics
 # Note: JAGS can be downloaded here: https://sourceforge.net/projects/mcmc-jags/
 
+library(patchwork)   # for some figure layout stuff
+
 library(shiny)       # This is used for some interactive visualizations
 runShiny <- F        # IMPORTANT: turning on/off the interactive visualizations.
                      # ==> leave this to FALSE for reproducible code
@@ -22,8 +24,29 @@ runShiny <- F        # IMPORTANT: turning on/off the interactive visualizations.
 # load data (from folder available on Github)
 load(file="data/tyb.Rdata")  # rivernetwork created from shapefile
 # telemdata <- read.csv("data/TananaBurbotTelem.csv")
-telemdata <- read.csv("data/TananaBurbotTelem2.csv")
+# telemdata <- read.csv("data/TananaBurbotTelem2.csv")
+
+## 2/26/2024 -- dataset changed, will just load new dataset and see if analysis changed
+## renaming columns from new dataset to match the old one to be sure my code will run!
+telemdata <- read.csv("data/TananaBurbotTelem3.csv") %>%
+  rename(tagging_date = date_tagged) %>%
+  rename(crew = tagging_crew) %>%
+  rename(date	= date_detected) %>%
+  rename(time	= time_detected) %>%
+  rename(current_state	= current_fate) %>%
+  rename(current_state_num	= current_fate_num) %>%
+  rename(tagging_location	= tagging_section) %>%
+  rename(section	= survey_section) %>%
+  rename(time_frame	= season) %>%
+  rename(time_frame_use	= season_use) %>%
+  filter(tagging_location != "TEST TAG")
+
+
+
 head(telemdata)  # looking at the first few rows
+
+
+
 
 
 ### some data manipulation & conversion...
@@ -222,6 +245,9 @@ all(apply(telem3d$total_length, 1, function(x) length(unique(x[!is.na(x)])))==1)
 lengths <- telem3d$total_length[,1]
 tagging_locations <- telem3d$tagging_location[,1]
 
+# thing on p9
+mean(lengths>=600 & lengths<=749)
+
 # histogram form
 hist(lengths, xlab="Total Length (mm)", main="")   # insert title in main=
 
@@ -256,7 +282,7 @@ rownames(length_tbl_mns) <- c("All Sections", names(n)[2:4])
 colnames(length_tbl_mns) <- c("n", "Mean", "SD", "SE", "95% CI for Mean")
 length_tbl_mns                # print to console
 knitr::kable(length_tbl_mns)  # print to Markdown doc
-
+# write.csv(length_tbl_mns, file="tables/Table4_partof.csv")
 
 
 ## - table output for binned lengths: n, prop, se
@@ -320,8 +346,78 @@ for(i in 2:ncol(telem3d$upriver)) {  # starting at 2 to not include tagging date
        xlim=range(telem3d$upriver, na.rm=T), 
        xlab="River Position (km)", ylab="Total Length (mm)", 
        col=as.numeric(as.factor(telem3d$tagging_location[,1]))[telem3d$current_state[,i]!="dead"]+1, pch=16)
-} 
+}
+
+## maybe try to re-create this in ggplot
+# telemdata$surveyseason <- paste0("Survey ",
+#                                  telemdata$flight_num,
+#                                  " (",
+#                                  telemdata$time_frame,
+#                                  " ",
+#                                  telemdata$year,
+#                                  ")")
+# constructing surveyseason from scratch
+telemdata$surveyseason <- NA
+telemdata$surveyseason[telemdata$flight_num==0.1 & telemdata$year==2018] <- "Tagging 2018"
+telemdata$surveyseason[telemdata$flight_num==0.1 & telemdata$year==2019] <- "Tagging 2019"
+telemdata$surveyseason[telemdata$flight_num==1] <- "Survey 1 (Winter 2019)"
+telemdata$surveyseason[telemdata$flight_num==2] <- "Survey 2 (Winter 2019)"
+telemdata$surveyseason[telemdata$flight_num==3] <- "Survey 3 (Spring 2019)"
+telemdata$surveyseason[telemdata$flight_num==4] <- "Survey 4 (Summer 2019)"
+telemdata$surveyseason[telemdata$flight_num==5] <- "Survey 5 (Fall 2019)"
+telemdata$surveyseason[telemdata$flight_num==6] <- "Survey 6 (Winter 2019)"
+telemdata$surveyseason[telemdata$flight_num==7] <- "Survey 7 (Winter 2020)"
+telemdata$surveyseason[telemdata$flight_num==8] <- "Survey 8 (Winter 2020)"
+telemdata$surveyseason[telemdata$flight_num==9] <- "Survey 9 (Spring 2020)"
+telemdata$surveyseason[telemdata$flight_num==10] <- "Survey 10 (Summer 2020)"
+telemdata$surveyseason[telemdata$flight_num==11] <- "Survey 11 (Fall 2020)"
+telemdata$surveyseason[telemdata$flight_num==12] <- "Survey 12 (Winter 2021)"
+telemdata$surveyseason[telemdata$flight_num==13] <- "Survey 13 (Winter 2021)"
+
+# this is a hilarious hack to get the surveys in the right order
+telemdata$surveyseason <- factor(telemdata$surveyseason,
+                                 levels=names(sort(tapply(telemdata$date, telemdata$surveyseason, mean))))
+
+# newcolors <- c("steelblue4","lightskyblue2","goldenrod1")
+newcolors <- c("grey50","grey80","darkorange")
+telemdata %>% 
+  ggplot(aes(x=upriver, y=total_length, color=tagging_location)) +
+  # ggplot(aes(x=upriver, y=total_length, fill=tagging_location)) +
+  geom_point() +
+  # geom_point(pch=21) +  
+  facet_wrap(~surveyseason) +
+  theme(legend.position = c(1, 0), legend.justification = c(1, 0)) +
+  scale_color_manual(values=newcolors) +
+  # scale_fill_manual(values=newcolors) +
+  theme_bw() +
+  labs(x="River Kilometer (RKM)", y="Total Length (mm)", color="Section Tagged") +
+  # labs(x="River Kilometer (RKM)", y="Total Length (mm)", fill="Section Tagged") +
+  theme(text=element_text(family="serif")) -> fig6
+fig6
+# ggsave(fig6, file="figures/Fig6.jpg", height=8, width=8, units="in")
+
+telemdata %>%
+  ggplot(aes(x=upriver, y=total_length, group=unique_id_num, col=tagging_location)) +
+  geom_point() +
+  # ggplot(aes(x=upriver, y=total_length, group=unique_id_num, fill=tagging_location, color=tagging_location)) +
+  # geom_point(pch=21) +
+  geom_line()+
+  scale_color_manual(values=newcolors) +
+  scale_fill_manual(values=newcolors) +
+  theme_bw() +
+  labs(x="River Kilometer (RKM)", y="Total Length (mm)", color="Section Tagged") +
+  # labs(x="River Kilometer (RKM)", y="Total Length (mm)", fill="Section Tagged") +
+  theme(text=element_text(family="serif")) -> fig6a
+fig6a
+# ggsave(fig6a, file="figures/Fig6a.jpg", height=8, width=8, units="in")
+
+# trying some alternate layout using patchwork
+fig6_6a <- (fig6a) / (fig6) + plot_layout(heights=2:3)
+fig6_6a
+# ggsave(fig6_6a, file="figures/Fig6_6a.jpg", height=10, width=8, units="in")
+
 ### THINK ABOUT HOW TO VISUALIZE THIS BETTER, PERHAPS SPATIALLY
+
 
 
 
@@ -334,8 +430,12 @@ for(i in 2:ncol(telem3d$upriver)) {  # starting at 2 to not include tagging date
 # ###### THIS IS LONG RUNNING AND IS CURRENTLY COMMENTED OUT
 
 # Making a couple new data objects
-telemdata1 <- telemdata %>% filter(flight_num>=1 & current_state!="dead")
-telem_alive <- telemdata %>% filter(current_state!="dead")
+
+# telemdata1 <- telemdata %>% filter(flight_num>=1 & current_state!="dead")
+# telem_alive <- telemdata %>% filter(current_state!="dead")
+
+telemdata1 <- telemdata %>% filter(flight_num>=1 & current_state=="alive")
+telem_alive <- telemdata %>% filter(current_state=="alive")
 
 # 
 # # empirical k-functions 
@@ -364,9 +464,23 @@ telem_alive <- telemdata %>% filter(current_state!="dead")
 ## the survey preceding spawning time for all individuals, and contrast the two.
 ## Contrast pre/spawning for all three spawning seasons, and contrast all seasons together.
 
+
+## --------------------------------------------------------------------------
+## this no longer works after the dataset change.  I don't know why yet, but
+## this section is no longer used in the analysis so I'm not going to try to 
+## adapt the code.
+##
+## To use this section, use TananaBurbotTelem2.csv as a data input, and omit
+## the steps in the pipeline reading TananaBurbotTelem3.csv
+## --------------------------------------------------------------------------
+
+if(FALSE) {  ## this is terrible but an easy way to skip over the following code
+
 # using data.frame telem_alive, define a new column for spawning season (where spawning_use is Y)
 telem_alive$spawn <- with(telem_alive, ifelse(!is.na(spawning_use) & spawning_use=="Y",
                           paste(spawning_season, "spawn", sep="_"), NA))
+# telem_alive$spawn <- with(telem_alive, ifelse(!is.na(spawning_season) & time_frame_use=="Y",
+#                                               paste(spawning_season, "spawn", sep="_"), NA))
 
 # then go by individual, and back-fill prespawn, defined as last observation before spawn
 indivs <- sort(unique(telem_alive$unique_id)) # vector of unique individuals
@@ -578,6 +692,43 @@ plotriverdensity1(network_dens_contrasts, bycol=T, bylwd=F, lwd = 10,
      main=c("2018_2019 contrast", "2019_2020 contrast", "2020_2021 contrast"),
      showN=F, points=F,pwr=.7)
 
+}    ###### end terrible if(FALSE) thing
+
+
+
+#### redoing kernel density for spawning times
+#### this will be figure 10
+
+# subset data to use for spawning
+spawndata <- telemdata %>%
+  filter(time_frame_use=="Y" & spawning_season %in% c("2018_2019", "2019_2020", "2020_2021"))
+with(spawndata, table(time_frame_use, spawning_season, useNA = "ifany"))
+
+# make kernel density object
+spawndensity <- with(spawndata, makeriverdensity(seg=seg, vert=vert, survey=spawning_season,
+                                                 rivers=tyb_trim,
+                                                 kernel="rect", bw=50*1000))
+
+# plot the thing
+
+# jpeg(file="figures/Fig10.jpg",
+#      width=6, height=9.5, units="in",
+#      res=300)
+par(mfrow=c(3,1))
+par(mar=c(0,0,2,0))
+par(family="serif")
+plot(spawndensity, 
+     scalebyN = FALSE, 
+     maxlwd = 15,
+     main = paste(2018:2020, "-", 2019:2021,"spawning season"),
+     scalebar=FALSE,
+     xaxt="n")
+# dev.off()
+####
+
+
+
+
 
 
 ## kernel density (linear)
@@ -781,8 +932,8 @@ paste0(sectiontables_bystock,", ",p_arr, ", (",se_arr,")")
 toprint <- matrix(nrow=dim(p_arr)[1], ncol=prod(dim(p_arr)[2:3]))
 for(j in 1:3) {
   for(k in 1:3) {
-    toprint[,(k-1)*3 + j] <- paste0(round(p_arr[,j,k],3), " (",
-                                    round(se_arr[,j,k],3), ")")
+    toprint[,(k-1)*3 + j] <- paste0(round(p_arr[,j,k],2), " (",
+                                    round(se_arr[,j,k],2), ")")
   }
   # toprint[,2*j-1] <- c("asdf",sectiontables_bystock[,j])
 }
@@ -791,7 +942,7 @@ rownames(toprint) <- c("Section observed", 1:dim(p_arr)[1])
 colnames(toprint) <- c("Tagged - Lower","","","Tagged - Middle","","","Tagged - Upper","","")
 toprint         # print to console
 kable(toprint)  # print to Markdown
-
+# write.csv(toprint, file="tables/Table7.csv")
 
 
 
@@ -888,6 +1039,72 @@ dtab$homerange <- 0
 for(i in 1:nrow(hr_table)) dtab$homerange[rownames(dtab)==hr_table$ID[i]] <- hr_table$range[i]
 
 
+## trying another ggplot thing
+dtab$tagging_location <- telem3d$tagging_location[,1]
+fig7 <- dtab %>% 
+  # filter(nobs > 1) %>%
+  ggplot(aes(x=homerange, fill=tagging_location)) +
+  geom_histogram(breaks=seq(0,500,by=50), color=1) +
+  scale_fill_manual(values=newcolors) +
+  labs(x="Minimum Homerange (RKM)", y="Frequency", fill="Section Tagged") +
+  theme_bw() +
+  theme(text=element_text(family="serif"))
+fig7
+# ggsave(fig7, width=7, height=5, units="in", filename="figures/Fig7.jpg")
+
+fig7a <- dtab %>% 
+  # filter(nobs > 1) %>%
+  ggplot(aes(x=homerange, fill=tagging_location)) +
+  geom_histogram(breaks=seq(0,500,by=50),col=1) +
+  facet_wrap(~tagging_location, nrow=3)+
+  scale_fill_manual(values=newcolors) +
+  labs(x="Minimum Homerange (RKM)", y="Frequency", fill="Section Tagged") +
+  theme_bw() + theme(legend.position = "none") +
+  theme(text=element_text(family="serif"))
+fig7a
+# ggsave(fig7a, width=5, height=7, units="in", filename="figures/Fig7a.jpg")
+
+
+
+## Table 8 re-created & filled
+dtab$lengthcut <- cut(telem3d$total_length[,1], breaks=c(600, 700, 800, 900, 1050), include.lowest = T)
+dtab1 <- subset(dtab, nobs > 1)
+# usethisdata <- dtab
+usethisdata <- dtab1
+part1 <- with(usethisdata,
+              data.frame(n = as.numeric(table(tagging_location)),
+                         Min = tapply(homerange, tagging_location, min),
+                         Max = tapply(homerange, tagging_location, max),
+                         Mean = tapply(homerange, tagging_location, mean),
+                         SE = tapply(homerange, tagging_location, sd)/
+                           sqrt(as.numeric(table(tagging_locations)))))
+part1$CI95 <- paste0("(", round(part1$Mean - 1.96*part1$SE), " - ",
+                     round(part1$Mean + 1.96*part1$SE), ")")
+part1
+part2 <- with(usethisdata,
+              data.frame(n = as.numeric(table(lengthcut)),
+                         Min = tapply(homerange, lengthcut, min),
+                         Max = tapply(homerange, lengthcut, max),
+                         Mean = tapply(homerange, lengthcut, mean),
+                         SE = tapply(homerange, lengthcut, sd)/
+                           sqrt(as.numeric(table(lengthcut)))))
+part2$CI95 <- paste0("(", round(part2$Mean - 1.96*part2$SE), " - ",
+                     round(part2$Mean + 1.96*part2$SE), ")")
+part2
+part3 <- with(usethisdata,
+              data.frame(n = length(lengthcut),
+                         Min = min(homerange),
+                         Max = max(homerange),
+                         Mean = mean(homerange),
+                         SE = sd(homerange)/
+                           sqrt(length(lengthcut))))
+part3$CI95 <- paste0("(", round(part3$Mean - 1.96*part3$SE), " - ",
+                     round(part3$Mean + 1.96*part3$SE), ")")
+part3
+
+table8 <- rbind(part1, part2, part3)
+# write.csv(table8, file="tables/Table8.csv")
+
 
 
 ### INVESTIGATING RELATIONSHIPS BETWEEN DISTANCE STUFF AND OTHER VARIABLES
@@ -910,6 +1127,31 @@ themode <- function(x) unname(names(sort(table(x), decreasing=T))[1])
 sectionmode <- unname(apply(telem3d$section, 1, themode))  # river section most often observed
 sectionmode[sectionmode=="Yukon"] <- "Lower"       # combining Yukon with Lower
 avgupriver <- rowMeans(telem3d$upriver, na.rm=T)   # avg upriver position (km)
+
+
+
+### re-creating appendix D
+lastalive <- as.Date(unname(apply(telem3d$date*(telem3d$current_state=="alive"), 
+                   MARGIN=1, FUN=max, na.rm=TRUE)) - telem3d$date[1,1],
+                   origin="2018-09-23")
+appD <- data.frame(Tagging_Date = telem3d$tagging_date[,1],
+                   Unique_fish_number = telem3d$unique_id_num[,1],
+                   Frequency_tag_ID_Identifier = telem3d$unique_id[,1],
+                   Section_Tagged = telem3d$section[,1],
+                   Final_Fate = "",
+                   Last_Date_Found_Alive = lastalive,   
+                   Days_Alive = dtab$ndays,
+                   Home_Range_RKM = dtab$homerange,
+                   Cumulative_Distance_Traveled_RKM = dtab$cumuldist,
+                   Cumulative_Distance_Traveled_per_Observation_Interval = dtab$dist_per_obs,
+                   Section_Most_Occupied = unname(apply(telem3d$section, 1, themode)),
+                   Mean_Upriver_Position = avgupriver,
+                   Life_History = telem3d$life_history[,1])  
+head(appD)
+# write.csv(appD, file="tables/AppendixD.csv")
+
+
+
 
 ## lots of exploratory plots
 for(imetric in c(6,3:5)) { # this was just a logical order of columns
@@ -952,8 +1194,9 @@ par(mar=parmar)
 
 ### bringing back the time series plot (line 412ish), but also showing 
 ### by-individual stuff from this section 
-make_a_ts <- function(colvec=rep(1,309), lwdvec=rep(1,309), alpha=c(.5,.3), ...) {
-  par(mar=c(5.1, 6.1, 4.1, 2.1))  # tweaking margin for this plot
+make_a_ts <- function(colvec=rep(1,309), lwdvec=rep(1,309), alpha=c(.5,.3), 
+                      parmar=c(5.1, 6.1, 4.1, 2.1), axis_labels=mnDates, ...) {
+  par(mar=parmar)  # tweaking margin for this plot
   plot(NA, ylim=c(max(daym, na.rm=T), min(daym, na.rm=T)), xlim=range(upm1, na.rm=T),
        xlab="Upriver position (km)", yaxt='n', ylab="", ...=...)
   for(i in 1:nrow(upm1)) {
@@ -962,7 +1205,7 @@ make_a_ts <- function(colvec=rep(1,309), lwdvec=rep(1,309), alpha=c(.5,.3), ...)
     lines(upm1[i,!is.na(upm1[i,])], daym[i,][!is.na(upm1[i,])], lty=3, 
           col=adjustcolor(colvec[i], alpha.f=alpha[2]), lwd=lwdvec[i])
   }
-  axis(side=2, at=as.numeric(mnDates[-1]), mnDates[-1], las=2)
+  axis(side=2, at=as.numeric(mnDates[-1]), axis_labels[-1], las=2)
   # note: axis ticks are not shown for tagging dates
   par(mar=parmar)  # resetting margins to default state
 }
@@ -985,6 +1228,26 @@ make_a_ts(lwdvec=as.numeric(cut(dtab$cumuldist,4)),
           main="Cumulative distance")
 make_a_ts(lwdvec=as.numeric(cut(dtab$dist_per_obs,3)),
           main="Cumulative distance per survey")
+
+
+#### figure 8 for report
+theseones <- which(telem3d$unique_id[,1] %in% c("34-43","22-14"))
+# levels(telemdata$surveyseason)[-c(1,4)]
+thelabels <- levels(telemdata$surveyseason)[-4]
+
+# jpeg(file="figures/Fig8.jpg",
+#      width=8, height=9, units="in",
+#      res=300)
+par(family="serif")
+par(mfrow=c(1,1))
+make_a_ts(lwdvec = 1+4*((1:309) %in% theseones), 
+          colvec = 2-1*((1:309) %in% theseones),  
+          # colvec = 4-3*((1:309) %in% theseones), 
+          alpha=c(.8,.8),
+          axis_labels = thelabels,
+          parmar = c(5.1, 11.1, 1.1, 1.1))
+# dev.off()
+####
 
 
 
@@ -1135,7 +1398,7 @@ vbl_list <- list(tagging_loc,avgupriver,uprivercut,sectionmode,
 sapply(vbl_list, function(x) sum(is.na(x)))
 
 v1 <- c("tagging_loc","avgupriver","uprivercut","sectionmode")
-v2 <- c("tagging_hab","life_hist")
+v2 <- "life_hist"  # c("tagging_hab","life_hist")
 v3 <- c("total_length","lengthcut")
 o1 <- c("+","*")
 
@@ -1272,7 +1535,7 @@ AIC(lm(y~life_hist*sectionmode+lengthcut)) - AIC(lm(y~life_hist*sectionmode))
 ## making a table of all models, sorted by AIC
 AICtbl <- data.frame(alltheAICs)
 AICtbl$Selected <- ""
-AICtbl$Selected[16] <- "***"
+AICtbl$Selected[11] <- "***"   # was 16
 AICtbl <- AICtbl[order(AICtbl$alltheAICs),]
 AICtbl <- rename(AICtbl, AIC=alltheAICs)
 AICtbl$deltaAIC <- AICtbl$AIC - AICtbl$AIC[1]
@@ -1287,13 +1550,18 @@ knitr::kable(AICtbl, digits=2)
 ### making an output table: median, sd, 95%ci backtransformed from log scale
 natmed <- tapply(dtab$dist_per_obs, lifesection, median, na.rm=T)
 natsd <- tapply(dtab$dist_per_obs, lifesection, sd, na.rm=T)
+natmin <- tapply(dtab$dist_per_obs, lifesection, min, na.rm=T)
+natmax <- tapply(dtab$dist_per_obs, lifesection, max, na.rm=T)
+natse <- as.numeric(natsd/sqrt(table(lifesection)))
 ymn <- tapply(y, lifesection, median, na.rm=T)
 yn <- table(lifesection[!is.na(dtab$dist_per_obs)])
 yse <- tapply(y, lifesection, sd, na.rm=T)/sqrt(yn)
 natcilo <- exp(ymn - 2*yse)
 natcihi <- exp(ymn + 2*yse)
 cichar <- paste0("(", round(natcilo,2), " - ", round(natcihi,2), ")")
-outtbl <- data.frame(Median=natmed, SD=natsd, CI95=cichar)
+outtbl <- data.frame(Min=natmin, Max=natmax,
+                     Median=natmed, SD=natsd, SE=natse,
+                     CI95=cichar)
 print(outtbl)
 kable(outtbl, digits=2)
 # write.csv(outtbl, file="tables/xxx2.csv")
@@ -1427,6 +1695,23 @@ boxplot(dtab$dist_per_obs ~ paste(life_hist, sectionmode), main="Dist per obs, b
 par(mar=parmar)  # re-setting margins
 
 
+### reworking Fig 9 as ggplot
+dtab$lifesection <- paste(life_hist, sectionmode)
+fig9 <- dtab %>%
+  ggplot(aes(y=dist_per_obs, x=lifesection, fill=lifesection)) +
+  scale_fill_manual(values=rep(newcolors,2)) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(y="Distance per Observation Interval", 
+       x="Mainstem                            Tributary/Lake") +
+  theme(legend.position = "none") +
+  theme(text=element_text(family="serif")) +
+  scale_x_discrete(labels=rep(c("Lower","Middle","Upper"),2))
+fig9
+# ggsave(fig9, width=6, height=6, units="in", filename="figures/Fig9.jpg")
+###
+
+
 ### making time-series plots to show up/downriver movement
 ### broken out by life history / river section
 par(mfrow=c(2,3))
@@ -1471,18 +1756,60 @@ par(mfrow=c(1,2))
 plotseq(sequentialdists, ylab="River distance (km)")
 plotseq(upstreamdists, ylab="Upstream rive distance (km)")
 
+season <- c("Fall-Winter", "Winter","Winter-Spring","Spring-Summer","Summer-Fall",
+            "Fall-Winter","Winter","Winter","Winter-Spring","Spring-Summer",
+            "Summer-Fall","Fall-Winter","Winter")
+season <- factor(season, levels=c("Winter","Winter-Spring","Spring-Summer","Summer-Fall","Fall-Winter"))
+
+upstreamdists1 <- upstreamdists
+names(upstreamdists)[1] <- names(upstreamdists)[1] <- "Tagging to 1"
+names(upstreamdists1) <- paste0(names(upstreamdists), " (", season, ")")
+
+# thecolors <- c("lavender","paleturquoise","green2","orange","red")
+# thecolors <- rainbow(5, end=.7, rev=TRUE) %>% 
+#   adjustcolor(red.f=.8, blue.f=.8, green.f=.8)
+# for(i in seq_along(thecolors)) {
+#   thecolors[i] <- adjustcolor(thecolors[i], alpha.f=i/5)
+# }
+# thecolors <- grey.colors(5, start=0.1, end=1, gamma=1.5)
+fig_new <- upstreamdists1 %>% 
+  # rename("Tagging to 1"="0.1 to 1") %>% 
+  stack %>%
+  ggplot(aes(x=ind,y=values,fill=season[ind])) +
+  geom_boxplot() +
+  # scale_fill_gradient() +
+  scale_fill_manual(values=thecolors) +
+  scale_x_discrete(labels=label_wrap_gen(15), guide=guide_axis(n.dodge=2)) +
+  # theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5)) +
+  # scale_fill_hue(direction=-1) +
+  geom_hline(yintercept = 0, lty=2) +
+  labs(x="Survey",y="Upstream Distance (RKM)",fill="Migration Season") +
+  theme_bw() +
+  theme(text=element_text(family="serif"))
+fig_new
+# ggsave(fig_new, file="figures/FigNew.jpg", width=8,height=6)
+  
+
+
+
 ## making a table of n/mean/SD/SE
 mean_tbl <- function(x) {
   n <- apply(!is.na(x), 2, sum)
+  min <- round(apply(x, 2, min, na.rm=T), 2)
+  max <- round(apply(x, 2, max, na.rm=T), 2)
   mn <- round(apply(x, 2, mean, na.rm=T), 2)
   SD <- round(apply(x, 2, sd, na.rm=T), 2)
   SE <- round(SD/sqrt(n), 2)
-  return(cbind(n,mn,SD,SE))
+  return(cbind(n,min,max,mn,SD,SE))
 }
 mean_tbl(sequentialdists)
 kable(mean_tbl(sequentialdists))
 mean_tbl(upstreamdists)
 kable(mean_tbl(upstreamdists))
+
+# write.csv(cbind(mean_tbl(sequentialdists), mean_tbl(upstreamdists)[,-1]), file="tables/table10.csv")
+
+
 
 
 
