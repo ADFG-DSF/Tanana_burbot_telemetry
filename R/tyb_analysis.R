@@ -1077,7 +1077,7 @@ part1 <- with(usethisdata,
                          Max = tapply(homerange, tagging_location, max),
                          Mean = tapply(homerange, tagging_location, mean),
                          SE = tapply(homerange, tagging_location, sd)/
-                           sqrt(as.numeric(table(tagging_locations)))))
+                           sqrt(as.numeric(table(tagging_location)))))
 part1$CI95 <- paste0("(", round(part1$Mean - 1.96*part1$SE), " - ",
                      round(part1$Mean + 1.96*part1$SE), ")")
 part1
@@ -1104,6 +1104,22 @@ part3
 
 table8 <- rbind(part1, part2, part3)
 # write.csv(table8, file="tables/Table8.csv")
+
+## thingy for discussion
+se <- function(x, na.rm=FALSE) {
+  sd(x, na.rm=na.rm)/sqrt(sum(!is.na(x)))
+}
+
+mean(usethisdata$homerange[usethisdata$lengthcut=="(900,1.05e+03]"])
+se(usethisdata$homerange[usethisdata$lengthcut=="(900,1.05e+03]"])
+
+mean(usethisdata$homerange[usethisdata$lengthcut!="(900,1.05e+03]"])
+se(usethisdata$homerange[usethisdata$lengthcut!="(900,1.05e+03]"])
+
+mean(usethisdata$homerange < 100)
+mean(usethisdata$homerange < 50)
+median(usethisdata$homerange)
+
 
 
 

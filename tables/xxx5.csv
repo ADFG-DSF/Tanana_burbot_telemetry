@@ -1,0 +1,7 @@
+"","Estimate","SE","CI95"
+"mainstem Lower",0.763,0.12,"(0.567 - 1.033)"
+"mainstem Middle",0.839,0.14,"(0.614 - 1.166)"
+"mainstem Upper",0.454,0.082,"(0.323 - 0.644)"
+"tributary Lower",1.344,0.348,"(0.863 - 2.215)"
+"tributary Middle",1.767,0.449,"(1.134 - 2.878)"
+"tributary Upper",1.428,0.277,"(0.997 - 2.087)"
