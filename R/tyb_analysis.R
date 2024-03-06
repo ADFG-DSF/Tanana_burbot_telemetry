@@ -1560,7 +1560,7 @@ rownames(AICtbl) <- 1:nrow(AICtbl)
 AICtbl <- select(AICtbl, c("Model","AIC","deltaAIC","Selected"))
 print(AICtbl)
 knitr::kable(AICtbl, digits=2)
-# write.csv(AICtbl, file="tables/xxx1.csv")
+# write.csv(AICtbl, file="tables/AppendixF.csv")
 
 
 ### making an output table: median, sd, 95%ci backtransformed from log scale
@@ -1580,7 +1580,7 @@ outtbl <- data.frame(Min=natmin, Max=natmax,
                      CI95=cichar)
 print(outtbl)
 kable(outtbl, digits=2)
-# write.csv(outtbl, file="tables/xxx2.csv")
+# write.csv(outtbl, file="tables/Table11.csv")
 
 
 ### THE BAYESIAN MODEL BELOW IS NO LONGER USED.  THE FINAL MODEL WAS SIMPLIFIED
