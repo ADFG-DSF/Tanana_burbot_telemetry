@@ -390,8 +390,8 @@ telemdata %>%
   scale_color_manual(values=newcolors) +
   # scale_fill_manual(values=newcolors) +
   theme_bw() +
-  labs(x="River Kilometer (RKM)", y="Total Length (mm)", color="Section Tagged") +
-  # labs(x="River Kilometer (RKM)", y="Total Length (mm)", fill="Section Tagged") +
+  labs(x="River Kilometer (rkm)", y="Total Length (mm)", color="Section Tagged") +
+  # labs(x="River Kilometer (rkm)", y="Total Length (mm)", fill="Section Tagged") +
   theme(text=element_text(family="serif")) -> fig6
 fig6
 # ggsave(fig6, file="figures/Fig6.jpg", height=8, width=8, units="in")
@@ -405,8 +405,8 @@ telemdata %>%
   scale_color_manual(values=newcolors) +
   scale_fill_manual(values=newcolors) +
   theme_bw() +
-  labs(x="River Kilometer (RKM)", y="Total Length (mm)", color="Section Tagged") +
-  # labs(x="River Kilometer (RKM)", y="Total Length (mm)", fill="Section Tagged") +
+  labs(x="River Kilometer (rkm)", y="Total Length (mm)", color="Section Tagged") +
+  # labs(x="River Kilometer (rkm)", y="Total Length (mm)", fill="Section Tagged") +
   theme(text=element_text(family="serif")) -> fig6a
 fig6a
 # ggsave(fig6a, file="figures/Fig6a.jpg", height=8, width=8, units="in")
@@ -1046,7 +1046,7 @@ fig7 <- dtab %>%
   ggplot(aes(x=homerange, fill=tagging_location)) +
   geom_histogram(breaks=seq(0,500,by=50), color=1) +
   scale_fill_manual(values=newcolors) +
-  labs(x="Minimum Homerange (RKM)", y="Frequency", fill="Section Tagged") +
+  labs(x="Minimum Homerange (rkm)", y="Frequency", fill="Section Tagged") +
   theme_bw() +
   theme(text=element_text(family="serif"))
 fig7
@@ -1058,7 +1058,7 @@ fig7a <- dtab %>%
   geom_histogram(breaks=seq(0,500,by=50),col=1) +
   facet_wrap(~tagging_location, nrow=3)+
   scale_fill_manual(values=newcolors) +
-  labs(x="Minimum Homerange (RKM)", y="Frequency", fill="Section Tagged") +
+  labs(x="Minimum Homerange (rkm)", y="Frequency", fill="Section Tagged") +
   theme_bw() + theme(legend.position = "none") +
   theme(text=element_text(family="serif"))
 fig7a
@@ -1214,7 +1214,7 @@ make_a_ts <- function(colvec=rep(1,309), lwdvec=rep(1,309), alpha=c(.5,.3),
                       parmar=c(5.1, 6.1, 4.1, 2.1), axis_labels=mnDates, ...) {
   par(mar=parmar)  # tweaking margin for this plot
   plot(NA, ylim=c(max(daym, na.rm=T), min(daym, na.rm=T)), xlim=range(upm1, na.rm=T),
-       xlab="Upriver position (km)", yaxt='n', ylab="", ...=...)
+       xlab="Upriver position (rkm)", yaxt='n', ylab="", ...=...)
   for(i in 1:nrow(upm1)) {
     points(upm1[i,], daym[i,], col=adjustcolor(colvec[i], alpha.f=alpha[1]))
     lines(upm1[i,], daym[i,], col=adjustcolor(colvec[i], alpha.f=alpha[1]), lwd=lwdvec[i])
@@ -1254,8 +1254,8 @@ thelabels <- levels(telemdata$surveyseason)[-4]
 # jpeg(file="figures/Fig8.jpg",
 #      width=8, height=9, units="in",
 #      res=300)
-par(family="serif")
-par(mfrow=c(1,1))
+# par(family="serif")
+# par(mfrow=c(1,1))
 make_a_ts(lwdvec = 1+4*((1:309) %in% theseones), 
           colvec = 2-1*((1:309) %in% theseones),  
           # colvec = 4-3*((1:309) %in% theseones), 
@@ -1718,7 +1718,7 @@ fig9 <- dtab %>%
   scale_fill_manual(values=rep(newcolors,2)) +
   geom_boxplot() +
   theme_bw() +
-  labs(y="Distance per Observation Interval", 
+  labs(y="Distance (rkm) per Observation Interval", 
        x="Mainstem                            Tributary/Lake") +
   theme(legend.position = "none") +
   theme(text=element_text(family="serif")) +
@@ -1777,6 +1777,11 @@ season <- c("Fall-Winter", "Winter","Winter-Spring","Spring-Summer","Summer-Fall
             "Summer-Fall","Fall-Winter","Winter")
 season <- factor(season, levels=c("Winter","Winter-Spring","Spring-Summer","Summer-Fall","Fall-Winter"))
 
+season1 <- c("Fall - Winter", "Winter","Winter - Spring","Spring - Summer","Summer - Fall",
+            "Fall - Winter","Winter","Winter","Winter - Spring","Spring - Summer",
+            "Summer - Fall","Fall - Winter","Winter")
+season1 <- factor(season1, levels=c("Winter","Winter - Spring","Spring - Summer","Summer - Fall","Fall - Winter"))
+
 upstreamdists1 <- upstreamdists
 names(upstreamdists)[1] <- names(upstreamdists)[1] <- "Tagging to 1"
 names(upstreamdists1) <- paste0(names(upstreamdists), " (", season, ")")
@@ -1787,7 +1792,7 @@ names(upstreamdists1) <- paste0(names(upstreamdists), " (", season, ")")
 # for(i in seq_along(thecolors)) {
 #   thecolors[i] <- adjustcolor(thecolors[i], alpha.f=i/5)
 # }
-# thecolors <- grey.colors(5, start=0.1, end=1, gamma=1.5)
+thecolors <- grey.colors(5, start=0.1, end=1, gamma=1.5)
 fig_new <- upstreamdists1 %>% 
   # rename("Tagging to 1"="0.1 to 1") %>% 
   stack %>%
@@ -1799,11 +1804,54 @@ fig_new <- upstreamdists1 %>%
   # theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5)) +
   # scale_fill_hue(direction=-1) +
   geom_hline(yintercept = 0, lty=2) +
-  labs(x="Survey",y="Upstream Distance (RKM)",fill="Migration Season") +
+  labs(x="Survey",y="Upstream Distance (rkm)",fill="Migration Season") +
   theme_bw() +
   theme(text=element_text(family="serif"))
 fig_new
 # ggsave(fig_new, file="figures/FigNew.jpg", width=8,height=6)
+
+fig_new1 <- upstreamdists1 %>% 
+  # rename("Tagging to 1"="0.1 to 1") %>% 
+  stack %>%
+  ggplot(aes(x=ind,y=values,fill=season[ind])) +
+  geom_boxplot() +
+  # scale_fill_gradient() +
+  scale_fill_manual(values=thecolors) +
+  scale_x_discrete(labels=label_wrap_gen(15)) + #, guide=guide_axis(n.dodge=2)) +
+  # theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5)) +
+  # scale_fill_hue(direction=-1) +
+  geom_hline(yintercept = 0, lty=2) +
+  labs(x="Survey",y="Upstream Distance (rkm)",fill="Migration Season") +
+  theme_bw() +
+  theme(text=element_text(family="serif"))
+fig_new1
+# ggsave(fig_new1, file="figures/FigNew1.jpg", width=15,height=6)
+
+upstreamdists1a <- upstreamdists1
+names(upstreamdists1a) <- c("Tagging to 1 (Fall - Winter)", "1 to 2 (Winter)",           
+                           "2 to 3 (Winter - Spring)",     "3 to 4 (Spring - Summer)",    
+                           "4 to 5 (Summer - Fall)",       "5 to 6 (Fall - Winter)",      
+                           "6 to 7 (Winter)",            "7 to 8 (Winter)",           
+                           "8 to 9 (Winter - Spring)",     "9 to 10 (Spring - Summer)",   
+                           "10 to 11 (Summer - Fall)",     "11 to 12 (Fall - Winter)",    
+                           "12 to 13 (Winter)")
+
+fig_new1a <- upstreamdists1a %>% 
+  # rename("Tagging to 1"="0.1 to 1") %>% 
+  stack %>%
+  ggplot(aes(x=ind,y=values,fill=season1[ind])) +
+  geom_boxplot() +
+  # scale_fill_gradient() +
+  scale_fill_manual(values=thecolors) +
+  scale_x_discrete(labels=label_wrap_gen(12))+#, guide=guide_axis(n.dodge=2)) +
+  # theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5)) +
+  # scale_fill_hue(direction=-1) +
+  geom_hline(yintercept = 0, lty=2) +
+  labs(x="Survey",y="Upstream Distance (rkm)",fill="Migration Season") +
+  theme_bw() +
+  theme(text=element_text(family="serif"))
+fig_new1a
+# ggsave(fig_new1a, file="figures/FigNew1a.jpg", width=15,height=6)
   
 
 
